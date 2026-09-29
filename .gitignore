@@ -10,3 +10,5 @@ coverage/
 *.iml
 .vscode/
 .DS_Store
+/dataset/
+/output/

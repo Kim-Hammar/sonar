@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import DataTable from '../../Common/DataTable/DataTable'
+import { HINTS } from '../../Common/hints'
 import StatusBadge from '../../Common/StatusBadge/StatusBadge'
 import './SpecificationTable.css'
 
@@ -52,23 +53,41 @@ export default function SpecificationTable({ rows, statuses = null }) {
       ),
     [rows, statuses, filter, query]
   )
+  const hints = HINTS.specifications
   const columns = [
-    { id: 'type', header: 'Type', cell: (row) => row.type.replace('_', ' ') },
-    { id: 'source', header: 'Source', cell: (row) => <span className="mono">{row.source}</span> },
+    { id: 'type', header: 'Type', hint: hints.type, cell: (row) => row.type.replace('_', ' ') },
+    {
+      id: 'source',
+      header: 'Source',
+      hint: hints.source,
+      cell: (row) => <span className="mono">{row.source}</span>
+    },
     {
       id: 'destination',
       header: 'Destination',
+      hint: hints.destination,
       cell: (row) => <span className="mono">{row.destination}</span>
     },
     {
       id: 'extra',
       header: 'Waypoint or routes',
+      hint: hints.extra,
       cell: (row) => (
         <span className="mono">{row.waypoint || (row.routes ? `${row.routes} routes` : '')}</span>
       )
     },
-    { id: 'label', header: 'Label', cell: (row) => <span className="muted">{row.status}</span> },
-    { id: 'state', header: 'State', cell: (row) => <StatusBadge status={stateOf(row, statuses)} /> }
+    {
+      id: 'label',
+      header: 'Label',
+      hint: hints.label,
+      cell: (row) => <span className="muted">{row.status}</span>
+    },
+    {
+      id: 'state',
+      header: 'State',
+      hint: statuses ? hints.runState : hints.initialState,
+      cell: (row) => <StatusBadge status={stateOf(row, statuses)} />
+    }
   ]
   return (
     <div className="SpecificationTable">

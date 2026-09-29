@@ -1,0 +1,69 @@
+.Hint {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.Hint-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--subtle);
+  cursor: help;
+}
+
+.Hint-icon:hover,
+.Hint-icon:focus-visible {
+  color: var(--accent);
+}
+
+.Hint-icon:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+.Hint-bubble {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--text);
+  box-shadow: var(--shadow-raised);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.Hint-bubble p {
+  margin: 0;
+}
+
+.Hint-bubble ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.Hint-bubble p + ul {
+  margin-top: 6px;
+}
+
+.Hint-bubble strong {
+  font-weight: 600;
+}

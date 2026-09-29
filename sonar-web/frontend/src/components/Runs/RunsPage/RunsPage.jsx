@@ -7,6 +7,7 @@ import { RUNS_REFRESH } from '../../Common/constants'
 import DataTable from '../../Common/DataTable/DataTable'
 import Empty from '../../Common/Empty/Empty'
 import { formatDateTime, formatDuration } from '../../Common/format'
+import { HINTS } from '../../Common/hints'
 import StatusBadge from '../../Common/StatusBadge/StatusBadge'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
 
@@ -49,11 +50,13 @@ export default function RunsPage() {
     {
       id: 'name',
       header: 'Name',
+      hint: HINTS.runs.name,
       cell: (run) => <span className="RunsPage-name">{run.name}</span>
     },
     {
       id: 'status',
       header: 'Status',
+      hint: HINTS.runs.status,
       cell: (run) => (
         <span className="RunsPage-status">
           <StatusBadge status={run.status} />
@@ -61,9 +64,26 @@ export default function RunsPage() {
         </span>
       )
     },
-    { id: 'scenarios', header: 'Scenarios', align: 'right', cell: (run) => run.scenarios.length },
-    { id: 'created', header: 'Created', cell: (run) => formatDateTime(run.created) },
-    { id: 'duration', header: 'Duration', align: 'right', cell: (run) => duration(run, now) }
+    {
+      id: 'scenarios',
+      header: 'Scenarios',
+      hint: HINTS.runs.scenarios,
+      align: 'right',
+      cell: (run) => run.scenarios.length
+    },
+    {
+      id: 'created',
+      header: 'Created',
+      hint: HINTS.runs.created,
+      cell: (run) => formatDateTime(run.created)
+    },
+    {
+      id: 'duration',
+      header: 'Duration',
+      hint: HINTS.runs.duration,
+      align: 'right',
+      cell: (run) => duration(run, now)
+    }
   ]
 
   return (

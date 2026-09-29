@@ -1,0 +1,11 @@
+.FieldLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.FieldLabel label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}

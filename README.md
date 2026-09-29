@@ -13,18 +13,24 @@ SONAR: Search-Optimal Network Agentic Repair.
 | Task | Command |
 |---|---|
 | Fetch the Batfish jar | `scripts/fetch-batfish.sh` |
+| Fetch the benchmark dataset | `scripts/fetch-dataset.sh` |
 | Build and run every check | `scripts/check.sh` |
 | Run the Java tests | `scripts/test.sh` |
 | Run the tests of one module | `scripts/test.sh sonar-core` |
 | Format the Java code | `scripts/format.sh` |
 | Coverage report | `./gradlew jacocoTestReport`, then open `<module>/build/reports/jacoco/test/html/index.html` |
 | Show the command-line help | `scripts/run.sh --help` |
-| Repair scenarios from the command line | `scripts/run.sh repair --dataset <dir> --scenario scenario-001 --output <dir>` |
+| Repair scenarios from the command line | `scripts/run.sh repair --scenario scenario-001` |
 | Build the web interface | `scripts/ui.sh build` |
-| Start the web server | `scripts/web.sh --dataset <dir> --output <dir>`, then open `http://127.0.0.1:8080` |
-| Try the interface without the engine | `scripts/web.sh --dataset <dir> --output <dir> --demo` |
+| Start the web server | `scripts/web.sh`, then open `http://127.0.0.1:8080` |
+| Try the interface without the engine | `scripts/web.sh --demo` |
 | Develop the web interface with hot reload | `scripts/ui.sh dev` while the server runs, then open `http://127.0.0.1:5173` |
 | Test, lint or format the web interface | `scripts/ui.sh test`, `scripts/ui.sh lint`, `scripts/ui.sh format` |
+
+`scripts/fetch-dataset.sh` downloads a pinned revision of the Cornetto benchmark from Hugging Face
+into `dataset/main_dataset`, about 410 MB. `sonar repair` and `sonar serve` read the dataset from
+there and write to `output`; `--dataset` and `--output` change both. The scripts start sonar in the
+repository root, so relative paths are resolved there.
 
 The server listens on `127.0.0.1:8080`; `--port` and `--host` change that. The decision model's
 API key is read from `OPENROUTER_API_KEY` in the server's environment. Runs are stored under

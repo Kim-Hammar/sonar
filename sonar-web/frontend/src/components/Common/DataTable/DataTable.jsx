@@ -1,8 +1,9 @@
+import Hint from '../Hint/Hint'
 import './DataTable.css'
 
 /**
- * A plain table. Columns name a header and how to render a cell; rows become clickable when
- * `onRowClick` is given.
+ * A plain table. Columns name a header, an optional `hint` that explains it, and how to render a
+ * cell; rows become clickable when `onRowClick` is given.
  */
 export default function DataTable({
   columns,
@@ -22,7 +23,7 @@ export default function DataTable({
           <tr>
             {columns.map((column) => (
               <th key={column.id} className={column.align === 'right' ? 'right' : undefined}>
-                {column.header}
+                {column.hint ? <Hint {...column.hint}>{column.header}</Hint> : column.header}
               </th>
             ))}
           </tr>

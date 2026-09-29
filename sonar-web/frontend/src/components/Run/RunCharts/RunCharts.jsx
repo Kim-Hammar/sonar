@@ -1,15 +1,19 @@
 import { formatCompact, formatNumber } from '../../Common/format'
+import Hint from '../../Common/Hint/Hint'
+import { HINTS } from '../../Common/hints'
 import LineChart from '../LineChart/LineChart'
 import './RunCharts.css'
 
 const CHARTS = [
   {
     title: 'Specifications remaining',
+    hint: HINTS.charts.remaining,
     format: formatNumber,
     series: [{ key: 'remaining', label: 'Remaining', color: 'var(--series-1)' }]
   },
   {
     title: 'Tokens',
+    hint: HINTS.charts.tokens,
     format: formatCompact,
     series: [
       { key: 'inputTokens', label: 'Input', color: 'var(--series-1)' },
@@ -18,6 +22,7 @@ const CHARTS = [
   },
   {
     title: 'Decisions and provider calls',
+    hint: HINTS.charts.decisions,
     format: formatNumber,
     series: [
       { key: 'decisions', label: 'Decisions', color: 'var(--series-3)' },
@@ -26,6 +31,7 @@ const CHARTS = [
   },
   {
     title: 'Verifications',
+    hint: HINTS.charts.verifications,
     format: formatNumber,
     series: [{ key: 'verifications', label: 'Verifications', color: 'var(--series-2)' }]
   }
@@ -37,7 +43,9 @@ export default function RunCharts({ state, scenario, onScenario }) {
   return (
     <section className="RunCharts">
       <div className="RunCharts-bar">
-        <h2>Progress</h2>
+        <h2>
+          <Hint {...HINTS.charts.progress}>Progress</Hint>
+        </h2>
         {state.order.length > 1 && (
           <select
             className="input"
@@ -59,6 +67,7 @@ export default function RunCharts({ state, scenario, onScenario }) {
           <LineChart
             key={chart.title}
             title={chart.title}
+            hint={chart.hint}
             series={chart.series}
             format={chart.format}
             points={points}

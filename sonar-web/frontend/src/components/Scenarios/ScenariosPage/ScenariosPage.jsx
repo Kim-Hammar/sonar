@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
 import DataTable from '../../Common/DataTable/DataTable'
+import { HINTS } from '../../Common/hints'
 import { useInfo } from '../../Common/info'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
 
@@ -51,6 +52,7 @@ export default function ScenariosPage() {
             {
               id: 'name',
               header: `${shown.length} scenarios`,
+              hint: HINTS.scenarios.list,
               cell: (row) => <span className="mono">{row.name}</span>
             }
           ]}

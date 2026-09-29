@@ -2,6 +2,8 @@ import { forceCenter, forceLink, forceManyBody, forceSimulation, forceX, forceY 
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity } from 'd3-zoom'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Hint from '../../Common/Hint/Hint'
+import { HINTS } from '../../Common/hints'
 import './TopologyGraph.css'
 
 const PALETTE = [
@@ -71,6 +73,15 @@ export default function TopologyGraph({
     [routers]
   )
   const legend = useMemo(() => systems(routers), [routers])
+  const help = HINTS.scenarios.topology
+  const explanation = [
+    help.colours,
+    highlighted.size > 0 ? help.changed : null,
+    help.navigation,
+    onSelect ? help.selection : null
+  ]
+    .filter(Boolean)
+    .join(' ')
   const bounds = useMemo(() => {
     const xs = nodes.map((node) => node.x)
     const ys = nodes.map((node) => node.y)
@@ -140,9 +151,11 @@ export default function TopologyGraph({
         </g>
       </svg>
       <div className="TopologyGraph-legend">
-        <span className="muted">
-          {routers.length} routers, {links.length} links
-        </span>
+        <Hint label="the topology" text={explanation}>
+          <span className="muted">
+            {routers.length} routers, {links.length} links
+          </span>
+        </Hint>
         {legend.map((entry) => (
           <span key={entry.asn} className="TopologyGraph-system">
             <span className="TopologyGraph-dot" style={{ background: entry.color }} />

@@ -5,6 +5,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -45,6 +46,8 @@ import se.kth.sonar.web.WebServer;
     subcommands = {SonarCli.Repair.class, SonarCli.Serve.class})
 public final class SonarCli implements Runnable {
   static final int NOT_IMPLEMENTED = 3;
+  static final String DATASET = "dataset/main_dataset";
+  static final String OUTPUT = "output";
 
   @Spec private CommandSpec spec;
 
@@ -92,6 +95,23 @@ public final class SonarCli implements Runnable {
     }
   }
 
+  /**
+   * Returns the workspace of a command.
+   *
+   * @throws CommandLine.ParameterException if the dataset directory does not exist
+   */
+  static Workspace workspace(CommandSpec spec, Path dataset, Path output) {
+    Workspace workspace = new Workspace(dataset, output);
+    if (!Files.isDirectory(workspace.dataset())) {
+      throw new CommandLine.ParameterException(
+          spec.commandLine(),
+          "no dataset at "
+              + workspace.dataset()
+              + "; run scripts/fetch-dataset.sh or pass --dataset DIR");
+    }
+    return workspace;
+  }
+
   /** Where the decision model is asked. */
   static final class DecisionOptions {
     @Option(
@@ -121,9 +141,10 @@ public final class SonarCli implements Runnable {
   static final class Repair implements Callable<Integer> {
     @Option(
         names = "--dataset",
-        required = true,
+        defaultValue = DATASET,
         paramLabel = "DIR",
-        description = "Dataset directory with one directory per scenario.")
+        description =
+            "Dataset directory with one directory per scenario (default: ${DEFAULT-VALUE}).")
     private Path dataset;
 
     @Option(
@@ -136,9 +157,11 @@ public final class SonarCli implements Runnable {
 
     @Option(
         names = "--output",
-        required = true,
+        defaultValue = OUTPUT,
         paramLabel = "DIR",
-        description = "Directory for run logs, the decision cache and engine storage.")
+        description =
+            "Directory for run logs, the decision cache and engine storage"
+                + " (default: ${DEFAULT-VALUE}).")
     private Path output;
 
     @Option(names = "--name", paramLabel = "TEXT", description = "Name of the run.")
@@ -240,7 +263,7 @@ public final class SonarCli implements Runnable {
               limits,
               Optional.ofNullable(timeLimit).map(Duration::ofSeconds),
               seed);
-      Workspace workspace = new Workspace(dataset, output);
+      Workspace workspace = workspace(spec, dataset, output);
       HttpTransport.Settings model = decisions.settings();
       PrintWriter out = spec.commandLine().getOut();
       try (RunLog log =
@@ -290,16 +313,19 @@ public final class SonarCli implements Runnable {
   static final class Serve implements Callable<Integer> {
     @Option(
         names = "--dataset",
-        required = true,
+        defaultValue = DATASET,
         paramLabel = "DIR",
-        description = "Dataset directory with one directory per scenario.")
+        description =
+            "Dataset directory with one directory per scenario (default: ${DEFAULT-VALUE}).")
     private Path dataset;
 
     @Option(
         names = "--output",
-        required = true,
+        defaultValue = OUTPUT,
         paramLabel = "DIR",
-        description = "Directory for run logs, the decision cache and engine storage.")
+        description =
+            "Directory for run logs, the decision cache and engine storage"
+                + " (default: ${DEFAULT-VALUE}).")
     private Path output;
 
     @Option(
@@ -345,7 +371,7 @@ public final class SonarCli implements Runnable {
           new WebServer.Config(
               host,
               port,
-              new Workspace(dataset, output),
+              workspace(spec, dataset, output),
               decisions.settings(),
               demo,
               Duration.ofMillis(demoPace),
@@ -362,6 +388,8 @@ public final class SonarCli implements Runnable {
                       }));
       PrintWriter out = spec.commandLine().getOut();
       out.println("sonar web interface at " + server.uri() + (demo ? " (demo runs)" : ""));
+      out.println("dataset " + config.workspace().dataset());
+      out.println("output " + config.workspace().output());
       if (!server.bundled()) {
         out.println(
             "the interface is not bundled; run scripts/ui.sh build and restart, or use scripts/ui.sh dev");

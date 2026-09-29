@@ -4,6 +4,9 @@ import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
 import { SPECIFICATION_PERCENTS } from '../../Common/constants'
 import Disclosure from '../../Common/Disclosure/Disclosure'
+import FieldLabel from '../../Common/FieldLabel/FieldLabel'
+import Hint from '../../Common/Hint/Hint'
+import { HINTS } from '../../Common/hints'
 import { useInfo } from '../../Common/info'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
 import ScenarioPicker from '../ScenarioPicker/ScenarioPicker'
@@ -108,7 +111,9 @@ function RunForm({ info, scenarios, onError }) {
   return (
     <form className="NewRunPage-form card" onSubmit={submit} noValidate>
       <div className="field">
-        <label htmlFor="run-name">Name</label>
+        <FieldLabel htmlFor="run-name" hint={HINTS.settings.name}>
+          Name
+        </FieldLabel>
         <input
           id="run-name"
           className="input"
@@ -118,7 +123,7 @@ function RunForm({ info, scenarios, onError }) {
         />
       </div>
       <div className="field">
-        <label>Scenarios</label>
+        <FieldLabel hint={HINTS.settings.scenarios}>Scenarios</FieldLabel>
         <ScenarioPicker
           scenarios={scenarios}
           selected={form.scenarios}
@@ -127,7 +132,9 @@ function RunForm({ info, scenarios, onError }) {
       </div>
       <div className="NewRunPage-row">
         <div className="field">
-          <label htmlFor="run-percent">Specifications</label>
+          <FieldLabel htmlFor="run-percent" hint={HINTS.settings.specifications}>
+            Specifications
+          </FieldLabel>
           <select
             id="run-percent"
             className="input"
@@ -143,7 +150,9 @@ function RunForm({ info, scenarios, onError }) {
         </div>
         {BUDGETS.map(([key, label]) => (
           <div className="field" key={key}>
-            <label htmlFor={`budget-${key}`}>{label} per scenario</label>
+            <FieldLabel htmlFor={`budget-${key}`} hint={HINTS.settings[key]}>
+              {`${label} per scenario`}
+            </FieldLabel>
             <input
               id={`budget-${key}`}
               className="input"
@@ -157,7 +166,9 @@ function RunForm({ info, scenarios, onError }) {
           </div>
         ))}
         <div className="field">
-          <label htmlFor="budget-minutes">Minutes per scenario</label>
+          <FieldLabel htmlFor="budget-minutes" hint={HINTS.settings.minutes}>
+            Minutes per scenario
+          </FieldLabel>
           <input
             id="budget-minutes"
             className="input"
@@ -172,7 +183,9 @@ function RunForm({ info, scenarios, onError }) {
         <div className="NewRunPage-row">
           {PARALLELISM.map(([key, label]) => (
             <div className="field" key={key}>
-              <label htmlFor={`parallelism-${key}`}>{label}</label>
+              <FieldLabel htmlFor={`parallelism-${key}`} hint={HINTS.settings[key]}>
+                {label}
+              </FieldLabel>
               <input
                 id={`parallelism-${key}`}
                 className="input"
@@ -185,7 +198,9 @@ function RunForm({ info, scenarios, onError }) {
             </div>
           ))}
           <div className="field">
-            <label htmlFor="run-seed">Seed</label>
+            <FieldLabel htmlFor="run-seed" hint={HINTS.settings.seed}>
+              Seed
+            </FieldLabel>
             <input
               id="run-seed"
               className="input"
@@ -196,7 +211,8 @@ function RunForm({ info, scenarios, onError }) {
           </div>
         </div>
         <p className="NewRunPage-model muted">
-          Decision model <span className="mono">{info.model}</span> at{' '}
+          <Hint {...HINTS.settings.decisionModel}>Decision model</Hint>{' '}
+          <span className="mono">{info.model}</span> at{' '}
           <span className="mono">{info.endpoint}</span>, set when the server starts.
         </p>
       </Disclosure>

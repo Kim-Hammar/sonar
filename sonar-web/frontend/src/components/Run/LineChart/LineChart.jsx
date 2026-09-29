@@ -4,6 +4,7 @@ import { curveStepAfter, line } from 'd3-shape'
 import { useMemo, useState } from 'react'
 import useElementSize from '../../../hooks/useElementSize'
 import { formatDuration, formatNumber } from '../../Common/format'
+import Hint from '../../Common/Hint/Hint'
 import './LineChart.css'
 
 const MAX_POINTS = 500
@@ -28,10 +29,11 @@ export function downsample(points, limit) {
 
 /**
  * A compact step chart of one or more cumulative metrics over the time since the run started.
- * Hovering shows the values at the nearest event.
+ * Hovering shows the values at the nearest event; an optional `hint` explains the title.
  */
 export default function LineChart({
   title,
+  hint,
   series,
   points,
   format = formatNumber,
@@ -79,7 +81,7 @@ export default function LineChart({
   return (
     <figure className="LineChart card">
       <figcaption className="LineChart-caption">
-        <span className="LineChart-title">{title}</span>
+        <span className="LineChart-title">{hint ? <Hint {...hint}>{title}</Hint> : title}</span>
         <span className="LineChart-legend">
           {series.map((entry) => (
             <span key={entry.key} className="LineChart-key">

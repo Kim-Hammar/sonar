@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../Common/api'
+import { HINTS } from '../../Common/hints'
 import { InfoContext } from '../../Common/info'
 import NewRunPage, { runRequest, validate } from './NewRunPage'
 
@@ -110,5 +111,43 @@ describe('NewRunPage', () => {
     expect(body.scenarios).toEqual(['scenario-002'])
     expect(body.settings.limits).toEqual({ verifications: 30 })
     expect(body.settings.decisionConcurrency).toBe(4)
+  })
+
+  it('explains every field with an info icon', async () => {
+    const user = userEvent.setup()
+    render(
+      <InfoContext.Provider value={INFO}>
+        <MemoryRouter>
+          <NewRunPage />
+        </MemoryRouter>
+      </InfoContext.Provider>
+    )
+    await user.click(screen.getByRole('button', { name: 'Advanced' }))
+    const fields = [
+      'Name',
+      'Scenarios',
+      'Specifications',
+      'Verifications per scenario',
+      'Decisions per scenario',
+      'Input tokens per scenario',
+      'Minutes per scenario',
+      'Verification workers',
+      'Decision requests in flight',
+      'Generation threads',
+      'Scenarios at a time',
+      'Decisions prefetched',
+      'Seed',
+      'Decision model'
+    ]
+    for (const field of fields) {
+      expect(screen.getByRole('button', { name: `About ${field}` })).toHaveAccessibleDescription(
+        /\w/
+      )
+    }
+    expect(screen.getAllByRole('button', { name: /^About / })).toHaveLength(fields.length)
+    expect(screen.getByRole('button', { name: 'About Seed' })).toHaveAccessibleDescription(
+      HINTS.settings.seed.text
+    )
+    expect(screen.getByLabelText('Seed')).toHaveValue('0')
   })
 })

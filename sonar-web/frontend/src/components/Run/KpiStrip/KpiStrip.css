@@ -1,16 +1,19 @@
 .KpiStrip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
 .KpiStrip-tile {
+  flex: 1 1 120px;
+  max-width: 240px;
   padding: 12px 14px;
 }
 
 .KpiStrip-label {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .KpiStrip-value {

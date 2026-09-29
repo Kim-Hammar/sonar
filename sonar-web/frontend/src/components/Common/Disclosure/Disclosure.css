@@ -8,16 +8,44 @@
   margin-top: 8px;
 }
 
+.Disclosure-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
 .Disclosure-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  padding: 8px 10px;
+  min-width: 0;
+  padding: 0;
   border: 0;
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+.Disclosure-toggle::after {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-small);
+  content: '';
+}
+
+.Disclosure-toggle:focus-visible {
+  outline: none;
+}
+
+.Disclosure-toggle:focus-visible::after {
+  outline: 2px solid var(--accent-soft);
+}
+
+.Disclosure-header .Hint {
+  position: relative;
+  z-index: 1;
 }
 
 .Disclosure-chevron {

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { describeEvent, EVENT_LABELS, formatTime } from '../../Common/format'
+import Hint from '../../Common/Hint/Hint'
+import { HINTS } from '../../Common/hints'
 import './ActivityList.css'
 
 const PAGE = 300
@@ -54,6 +56,7 @@ export default function ActivityList({ events, scenarios, onOpen }) {
             </option>
           ))}
         </select>
+        <Hint label="event types" {...HINTS.activity.types} />
         <span className="muted">{shown.length} events</span>
       </div>
       {shown.length === 0 && <div className="ActivityList-empty muted">No events yet</div>}

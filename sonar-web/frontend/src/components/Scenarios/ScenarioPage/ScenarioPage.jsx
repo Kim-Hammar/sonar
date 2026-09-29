@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
+import FieldLabel from '../../Common/FieldLabel/FieldLabel'
+import { HINTS } from '../../Common/hints'
 import Tabs from '../../Common/Tabs/Tabs'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
 import ConfigViewer from '../ConfigViewer/ConfigViewer'
@@ -86,9 +88,9 @@ function ScenarioView({ name }) {
       {tab === 'specifications' && summary && (
         <>
           <div className="ScenarioPage-percent">
-            <label className="muted" htmlFor="scenario-percent">
+            <FieldLabel htmlFor="scenario-percent" hint={HINTS.scenarios.specificationFile}>
               Specification file
-            </label>
+            </FieldLabel>
             <select
               id="scenario-percent"
               className="input"

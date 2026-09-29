@@ -7,8 +7,32 @@ import DataTable from '../../Common/DataTable/DataTable'
 import DiffView from '../../Common/DiffView/DiffView'
 import Disclosure from '../../Common/Disclosure/Disclosure'
 import { describeEvent, formatCompact, formatNumber, STOP_LABELS } from '../../Common/format'
+import Hint from '../../Common/Hint/Hint'
+import { HINTS } from '../../Common/hints'
 import StatusBadge from '../../Common/StatusBadge/StatusBadge'
 import './Inspector.css'
+
+const hints = HINTS.inspector
+
+function Heading({ hint, children }) {
+  return (
+    <h3 className="Inspector-heading">
+      <Hint {...hint}>{children}</Hint>
+    </h3>
+  )
+}
+
+function TracesSection({ evidence }) {
+  return (
+    <Disclosure
+      title="Forwarding traces"
+      hint={hints.traces}
+      meta={formatNumber(evidence.traces.length)}
+    >
+      <Traces evidence={evidence} />
+    </Disclosure>
+  )
+}
 
 function KeyList({ keys }) {
   if (!keys || keys.length === 0) {
@@ -49,13 +73,21 @@ function Traces({ evidence }) {
 function Verdict({ verdict }) {
   return (
     <>
-      <Disclosure title="Unresolved" meta={formatNumber(verdict.unresolved.length)}>
+      <Disclosure
+        title="Unresolved"
+        hint={hints.unresolved}
+        meta={formatNumber(verdict.unresolved.length)}
+      >
         <KeyList keys={verdict.unresolved} />
       </Disclosure>
-      <Disclosure title="Fixed" meta={formatNumber(verdict.fixed.length)}>
+      <Disclosure title="Fixed" hint={hints.fixed} meta={formatNumber(verdict.fixed.length)}>
         <KeyList keys={verdict.fixed} />
       </Disclosure>
-      <Disclosure title="Side effects" meta={formatNumber(verdict.sideEffects.length)}>
+      <Disclosure
+        title="Side effects"
+        hint={hints.sideEffects}
+        meta={formatNumber(verdict.sideEffects.length)}
+      >
         <KeyList keys={verdict.sideEffects} />
       </Disclosure>
     </>
@@ -66,16 +98,22 @@ function Decision({ detail }) {
   const answer = detail.answer
   return (
     <>
-      <h3 className="Inspector-heading">Answer</h3>
+      <Heading hint={hints.answer}>Answer</Heading>
       {answer && answer.regions && (
         <DataTable
           rows={[...answer.regions, { id: 'none of these', probability: answer.none }]}
           rowKey={(row) => row.id}
           columns={[
-            { id: 'id', header: 'Region', cell: (row) => <span className="mono">{row.id}</span> },
+            {
+              id: 'id',
+              header: 'Region',
+              hint: hints.region,
+              cell: (row) => <span className="mono">{row.id}</span>
+            },
             {
               id: 'p',
               header: 'Probability',
+              hint: hints.probability,
               align: 'right',
               cell: (row) => row.probability.toFixed(3)
             }
@@ -84,7 +122,7 @@ function Decision({ detail }) {
       )}
       {answer && answer.order && <KeyList keys={answer.order} />}
       {!answer && <Alert tone="warn">{detail.reason}</Alert>}
-      <h3 className="Inspector-heading">Context</h3>
+      <Heading hint={hints.context}>Context</Heading>
       {detail.context.map((section) => (
         <Disclosure
           key={section.title}
@@ -94,7 +132,7 @@ function Decision({ detail }) {
           <CodeBlock text={section.body} />
         </Disclosure>
       ))}
-      <h3 className="Inspector-heading">Exchanges with the model</h3>
+      <Heading hint={hints.exchanges}>Exchanges with the model</Heading>
       {detail.exchanges.length === 0 && <div className="muted">Nothing was sent</div>}
       {detail.exchanges.map((exchange, index) => (
         <Disclosure
@@ -117,11 +155,13 @@ function Candidate({ detail }) {
     <>
       <div className="Inspector-line">
         <StatusBadge status={detail.change} />
+        <Hint label="Effect" {...hints.effect} />
         <span className="muted">
           in <span className="mono">{detail.region}</span>, {detail.hypothesis.support} values
         </span>
+        <Hint label="Values" {...hints.support} />
       </div>
-      <h3 className="Inspector-heading">Specifications that changed</h3>
+      <Heading hint={hints.changed}>Specifications that changed</Heading>
       <DataTable
         rows={detail.changes}
         rowKey={(row) => row.key}
@@ -130,18 +170,27 @@ function Candidate({ detail }) {
           {
             id: 'key',
             header: 'Specification',
+            hint: hints.specification,
             cell: (row) => <span className="mono">{row.key}</span>
           },
-          { id: 'before', header: 'Before', cell: (row) => <StatusBadge status={row.before} /> },
-          { id: 'after', header: 'After', cell: (row) => <StatusBadge status={row.after} /> }
+          {
+            id: 'before',
+            header: 'Before',
+            hint: hints.before,
+            cell: (row) => <StatusBadge status={row.before} />
+          },
+          {
+            id: 'after',
+            header: 'After',
+            hint: hints.after,
+            cell: (row) => <StatusBadge status={row.after} />
+          }
         ]}
       />
-      <h3 className="Inspector-heading">Edits</h3>
+      <Heading hint={hints.edits}>Edits</Heading>
       <DiffView edits={detail.hypothesis.edits} />
-      <h3 className="Inspector-heading">Evidence</h3>
-      <Disclosure title="Forwarding traces" meta={formatNumber(detail.evidence.traces.length)}>
-        <Traces evidence={detail.evidence} />
-      </Disclosure>
+      <Heading hint={hints.evidence}>Evidence</Heading>
+      <TracesSection evidence={detail.evidence} />
     </>
   )
 }
@@ -155,37 +204,44 @@ function Body({ detail }) {
     case 'adopted':
       return (
         <>
-          <h3 className="Inspector-heading">Edits</h3>
+          <Heading hint={hints.edits}>Edits</Heading>
           <DiffView edits={detail.hypotheses.flatMap((hypothesis) => hypothesis.edits)} />
-          <h3 className="Inspector-heading">Verdict after adoption</h3>
+          <Heading hint={hints.verdict}>Verdict after adoption</Heading>
           <Verdict verdict={detail.verdict} />
-          <Disclosure title="Forwarding traces" meta={formatNumber(detail.evidence.traces.length)}>
-            <Traces evidence={detail.evidence} />
-          </Disclosure>
+          <TracesSection evidence={detail.evidence} />
         </>
       )
     case 'baseline':
       return (
         <>
           <Verdict verdict={detail.verdict} />
-          <Disclosure title="Forwarding traces" meta={formatNumber(detail.evidence.traces.length)}>
-            <Traces evidence={detail.evidence} />
-          </Disclosure>
+          <TracesSection evidence={detail.evidence} />
         </>
       )
     case 'space-built':
       return (
-        <Disclosure title="Regions" meta={formatNumber(detail.regions.length)}>
+        <Disclosure title="Regions" hint={hints.regions} meta={formatNumber(detail.regions.length)}>
           <DataTable
             rows={detail.regions}
             rowKey={(row) => row.id}
             columns={[
-              { id: 'id', header: 'Region', cell: (row) => <span className="mono">{row.id}</span> },
-              { id: 'kind', header: 'Kind', cell: (row) => row.kind },
-              { id: 'routers', header: 'Routers', cell: (row) => row.routers.join(', ') },
+              {
+                id: 'id',
+                header: 'Region',
+                hint: hints.regionId,
+                cell: (row) => <span className="mono">{row.id}</span>
+              },
+              { id: 'kind', header: 'Kind', hint: hints.kind, cell: (row) => row.kind },
+              {
+                id: 'routers',
+                header: 'Routers',
+                hint: hints.routers,
+                cell: (row) => row.routers.join(', ')
+              },
               {
                 id: 'bound',
                 header: 'Candidates',
+                hint: hints.bound,
                 align: 'right',
                 cell: (row) => formatNumber(row.bound)
               }
@@ -207,6 +263,7 @@ function Body({ detail }) {
               status={detail.stop === 'solved' ? 'solved' : 'stopped'}
               label={STOP_LABELS[detail.stop]}
             />
+            <Hint label="Stop reason" {...hints.stop} />
             {detail.resource && <span className="muted">{detail.resource}</span>}
           </div>
           <Verdict verdict={detail.verdict} />

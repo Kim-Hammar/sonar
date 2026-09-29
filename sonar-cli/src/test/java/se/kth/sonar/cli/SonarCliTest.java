@@ -7,8 +7,11 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import se.kth.sonar.app.TestDataset;
 
@@ -37,7 +40,11 @@ class SonarCliTest {
     assertThat(result.status()).isZero();
     assertThat(result.out()).contains("repair").contains("serve");
     assertThat(run().out()).contains("Usage: sonar");
-    assertThat(run("serve", "--help").out()).contains("--port").contains("--demo");
+    assertThat(run("serve", "--help").out())
+        .contains("--port")
+        .contains("--demo")
+        .contains("default: dataset/main_dataset")
+        .contains("default: output");
   }
 
   @Test
@@ -71,6 +78,24 @@ class SonarCliTest {
   void missingOptionsAreUsageErrors() {
     Result result = run("repair");
     assertThat(result.status()).isEqualTo(2);
-    assertThat(result.err()).contains("Missing required options");
+    assertThat(result.err()).contains("Missing required option: '--scenario=NAME'");
+  }
+
+  @Test
+  @Timeout(30)
+  void aMissingDatasetNamesTheFetchScript(@TempDir Path directory) {
+    Path absent = directory.resolve("absent");
+    Path output = directory.resolve("output");
+    for (List<String> command :
+        List.of(List.of("repair", "--scenario", "scenario-001"), List.of("serve", "--port", "0"))) {
+      List<String> args = new ArrayList<>(command);
+      args.addAll(List.of("--dataset", absent.toString(), "--output", output.toString()));
+      Result result = run(args.toArray(String[]::new));
+      assertThat(result.status()).isEqualTo(2);
+      assertThat(result.err())
+          .contains("no dataset at " + absent)
+          .contains("run scripts/fetch-dataset.sh or pass --dataset DIR");
+    }
+    assertThat(output).doesNotExist();
   }
 }
