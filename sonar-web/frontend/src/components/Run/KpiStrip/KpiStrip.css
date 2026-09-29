@@ -1,0 +1,27 @@
+.KpiStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.KpiStrip-tile {
+  padding: 12px 14px;
+}
+
+.KpiStrip-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.KpiStrip-value {
+  margin-top: 2px;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.KpiStrip-detail {
+  color: var(--subtle);
+  font-size: 12px;
+}

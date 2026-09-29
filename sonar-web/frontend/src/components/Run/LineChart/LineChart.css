@@ -1,0 +1,76 @@
+.LineChart {
+  margin: 0;
+  padding: 12px 14px 8px;
+}
+
+.LineChart-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+
+.LineChart-title {
+  font-weight: 600;
+}
+
+.LineChart-legend {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.LineChart-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.LineChart-key strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.LineChart-swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.LineChart-frame {
+  position: relative;
+  width: 100%;
+}
+
+.LineChart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.LineChart-grid {
+  stroke: var(--border);
+}
+
+.LineChart-axis {
+  fill: var(--subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.LineChart-line {
+  fill: none;
+  stroke-width: 1.8;
+}
+
+.LineChart-rule {
+  stroke: var(--border-strong);
+  stroke-dasharray: 3 3;
+}

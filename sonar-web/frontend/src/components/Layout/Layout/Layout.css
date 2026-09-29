@@ -1,0 +1,9 @@
+.Layout {
+  display: flex;
+  min-height: 100%;
+}
+
+.Layout-main {
+  flex: 1;
+  min-width: 0;
+}

@@ -1,0 +1,33 @@
+.SpecificationTable-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.SpecificationTable-filters {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.SpecificationTable-filter {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.SpecificationTable-filter.active {
+  background: var(--neutral-soft);
+  font-weight: 500;
+}
+
+.SpecificationTable .DataTable-frame {
+  max-height: 520px;
+}

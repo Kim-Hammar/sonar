@@ -1,0 +1,59 @@
+.DataTable-frame {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.DataTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.DataTable th {
+  position: sticky;
+  top: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.DataTable td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.DataTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.DataTable .right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.DataTable tr.clickable {
+  cursor: pointer;
+}
+
+.DataTable tr.clickable:hover td {
+  background: var(--surface-muted);
+}
+
+.DataTable tr.selected td {
+  background: var(--accent-soft);
+}
+
+.DataTable-empty {
+  padding: 32px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
+}

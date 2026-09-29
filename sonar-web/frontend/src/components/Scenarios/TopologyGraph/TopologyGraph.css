@@ -1,0 +1,63 @@
+.TopologyGraph {
+  overflow: hidden;
+}
+
+.TopologyGraph-canvas {
+  display: block;
+  width: 100%;
+  background: var(--surface-muted);
+  cursor: grab;
+}
+
+.TopologyGraph-link {
+  stroke: #c3c9d2;
+  stroke-width: 0.9;
+}
+
+.TopologyGraph-node {
+  cursor: pointer;
+}
+
+.TopologyGraph-node circle {
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.TopologyGraph-ring {
+  fill: none;
+  stroke: var(--text) !important;
+  stroke-width: 1.5 !important;
+}
+
+.TopologyGraph-label {
+  fill: var(--text);
+  font-size: 8px;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+}
+
+.TopologyGraph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.TopologyGraph-system {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.TopologyGraph-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.TopologyGraph-dot.ring {
+  border: 1.5px solid var(--text);
+}

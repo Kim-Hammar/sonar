@@ -1,0 +1,66 @@
+.ActivityList-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ActivityList-items {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.ActivityList-item {
+  display: grid;
+  grid-template-columns: 70px auto 150px 1fr;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ActivityList-item:hover {
+  background: var(--surface-muted);
+}
+
+.ActivityList-time {
+  color: var(--subtle);
+}
+
+.ActivityList-scenario {
+  color: var(--muted);
+}
+
+.ActivityList-type {
+  font-weight: 500;
+}
+
+.ActivityList-type.adopted,
+.ActivityList-type.finished {
+  color: var(--ok);
+}
+
+.ActivityList-type.failed {
+  color: var(--bad);
+}
+
+.ActivityList-text {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ActivityList-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+.ActivityList-more {
+  margin-top: 8px;
+}

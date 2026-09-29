@@ -1,0 +1,38 @@
+.DiffView {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.DiffView-edit {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.DiffView-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  font-size: 12px;
+}
+
+.DiffView-line {
+  padding: 1px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre;
+}
+
+.DiffView-line.added {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.DiffView-line.removed {
+  background: var(--bad-soft);
+  color: var(--bad);
+}

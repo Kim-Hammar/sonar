@@ -1,0 +1,24 @@
+[versions]
+java = "25"
+jackson = { strictly = "2.20.0" }
+picocli = "4.7.7"
+junit = "6.1.3"
+assertj = "3.27.7"
+errorprone = "2.50.0"
+google-java-format = "1.36.1"
+checkstyle = "14.3.0"
+jacoco = "0.8.15"
+plugin-spotless = "8.10.3"
+plugin-errorprone = "5.1.1"
+
+[libraries]
+jackson-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind" }
+picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
+spotless-gradle-plugin = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "plugin-spotless" }
+errorprone-gradle-plugin = { module = "net.ltgt.gradle:gradle-errorprone-plugin", version.ref = "plugin-errorprone" }

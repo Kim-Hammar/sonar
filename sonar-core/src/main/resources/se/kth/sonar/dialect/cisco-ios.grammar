@@ -1,0 +1,111 @@
+grammar cisco-ios
+comment !
+
+sort hostname name
+sort word name
+sort address ipv4
+sort mask mask
+sort wildcard wildcard
+sort prefix prefix
+sort net iso-net
+sort asn integer 1..4294967295
+sort process integer 1..65535
+sort area integer 0..4294967295
+sort sequence integer 0..4294967295
+sort prefix-length integer 0..32
+sort ospf-cost integer 1..65535
+sort isis-metric integer 1..16777215
+sort mtu integer 64..65535
+sort preference integer 0..4294967295
+sort metric integer 0..4294967295
+sort metric-type integer 1..2
+sort tag integer 0..4294967295
+sort interface interface Loopback GigabitEthernet FastEthernet Ethernet Serial Port-channel Vlan Tunnel
+sort action enum permit deny
+sort direction enum in out
+sort ospf-network-type enum point-to-point broadcast non-broadcast point-to-multipoint
+sort isis-level enum level-1 level-1-2 level-2-only
+sort metric-style enum wide narrow transition
+sort community community
+sort text text
+
+context root
+context interface in root
+context router-bgp in root
+context address-family in router-bgp
+context router-ospf in root
+context router-isis in root
+context route-map in root
+context acl in root
+
+production hostname root : hostname <name:hostname>
+production interface root opens interface : interface <name:interface>
+production router-bgp root opens router-bgp : router bgp <asn:asn>
+production router-ospf root opens router-ospf : router ospf <process:process>
+production router-isis root opens router-isis : router isis <process:process>
+production route-map root opens route-map : route-map <name:word> <action:action> <sequence:sequence>
+production access-list root opens acl : ip access-list extended <name:word>
+production prefix-list-entry root : ip prefix-list <name:word> seq <sequence:sequence> <action:action> <prefix:prefix>
+production prefix-list-entry-le root : ip prefix-list <name:word> seq <sequence:sequence> <action:action> <prefix:prefix> le <le:prefix-length>
+production prefix-list-entry-ge-le root : ip prefix-list <name:word> seq <sequence:sequence> <action:action> <prefix:prefix> ge <ge:prefix-length> le <le:prefix-length>
+production community-list root : ip community-list standard <name:word> <action:action> <communities:community>+
+production static-route-interface root : ip route <network:address> <mask:mask> <interface:interface>
+production static-route-next-hop root : ip route <network:address> <mask:mask> <next-hop:address>
+
+production description interface : description <text:text>+
+production ip-address interface : ip address <address:address> <mask:mask>
+production ip-ospf-area interface : ip ospf <process:process> area <area:area>
+production ip-ospf-cost interface : ip ospf cost <cost:ospf-cost>
+production ip-ospf-network interface : ip ospf network <type:ospf-network-type>
+production ip-router-isis interface : ip router isis <process:process>
+production isis-circuit-type interface : isis circuit-type <level:isis-level>
+production isis-metric interface : isis metric <metric:isis-metric>
+production mtu interface : mtu <mtu:mtu>
+production interface-shutdown interface : shutdown
+production ip-access-group interface : ip access-group <acl:word> <direction:direction>
+
+production bgp-router-id router-bgp : bgp router-id <id:address>
+production bgp-log-neighbor-changes router-bgp : bgp log-neighbor-changes
+production bgp-cluster-id router-bgp : bgp cluster-id <id:address>
+production no-bgp-default-ipv4 router-bgp : no bgp default ipv4-unicast
+production peer-group router-bgp : neighbor <group:word> peer-group
+production peer-group-remote-as router-bgp : neighbor <group:word> remote-as <asn:asn>
+production peer-group-update-source router-bgp : neighbor <group:word> update-source <interface:interface>
+production neighbor-peer-group router-bgp : neighbor <peer:address> peer-group <group:word>
+production neighbor-remote-as router-bgp : neighbor <peer:address> remote-as <asn:asn>
+production neighbor-update-source router-bgp : neighbor <peer:address> update-source <interface:interface>
+production neighbor-shutdown router-bgp : neighbor <peer:address> shutdown
+production address-family router-bgp opens address-family : address-family ipv4
+
+production neighbor-activate address-family : neighbor <peer:address> activate
+production neighbor-next-hop-self address-family : neighbor <peer:address> next-hop-self
+production neighbor-route-map address-family : neighbor <peer:address> route-map <map:word> <direction:direction>
+production neighbor-route-reflector-client address-family : neighbor <peer:address> route-reflector-client
+production peer-group-route-reflector-client address-family : neighbor <group:word> route-reflector-client
+production bgp-network address-family : network <network:address> mask <mask:mask>
+production exit-address-family address-family closes : exit-address-family
+
+production ospf-router-id router-ospf : router-id <id:address>
+production ospf-passive-interface router-ospf : passive-interface <interface:interface>
+production ospf-network router-ospf : network <network:address> <wildcard:wildcard> area <area:area>
+production ospf-redistribute-bgp router-ospf : redistribute bgp <asn:asn> subnets route-map <map:word>
+production ospf-redistribute-bgp-metric router-ospf : redistribute bgp <asn:asn> metric <metric:metric> metric-type <type:metric-type> subnets route-map <map:word>
+
+production isis-net router-isis : net <net:net>
+production isis-is-type router-isis : is-type <level:isis-level>
+production isis-metric-style router-isis : metric-style <style:metric-style>
+production isis-passive-interface router-isis : passive-interface <interface:interface>
+
+production match-prefix-list route-map : match ip address prefix-list <list:word>
+production match-community route-map : match community <list:word>
+production match-tag route-map : match tag <tag:tag>
+production set-local-preference route-map : set local-preference <preference:preference>
+production set-metric route-map : set metric <metric:metric>
+production set-as-path-prepend route-map : set as-path prepend <asns:asn>+
+production set-community route-map : set community <communities:community>+ additive
+production set-next-hop route-map : set ip next-hop <next-hop:address>
+production set-tag route-map : set tag <tag:tag>
+
+production acl-host acl : <sequence:sequence> <action:action> ip host <host:address> any
+production acl-network acl : <sequence:sequence> <action:action> ip <network:address> <wildcard:wildcard> any
+production acl-any acl : <sequence:sequence> <action:action> ip any any

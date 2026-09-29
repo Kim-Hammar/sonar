@@ -1,0 +1,207 @@
+relations cisco-ios
+
+object router
+  attribute hostname = hostname.name
+  attribute bgp-asn = router-bgp.asn
+  attribute bgp-router-id = bgp-router-id.id
+  attribute bgp-cluster-id = bgp-cluster-id.id
+  attribute bgp-ipv4-unicast-off flag no-bgp-default-ipv4
+  attribute ospf-process = router-ospf.process
+  attribute ospf-router-id = ospf-router-id.id
+  attribute ospf-redistribution ref route-map = ospf-redistribute-bgp.map ospf-redistribute-bgp-metric.map
+  attribute isis-net = isis-net.net
+  attribute isis-level = isis-is-type.level
+
+object interface
+  key name from interface
+  attribute address = ip-address.address
+  attribute mask = ip-address.mask
+  attribute ospf-area = ip-ospf-area.area
+  attribute ospf-cost = ip-ospf-cost.cost
+  attribute ospf-network-type = ip-ospf-network.type
+  attribute ospf-passive flag ospf-passive-interface by interface
+  attribute isis-enabled flag ip-router-isis
+  attribute isis-circuit-type = isis-circuit-type.level
+  attribute isis-metric = isis-metric.metric
+  attribute isis-passive flag isis-passive-interface by interface
+  attribute shutdown flag interface-shutdown
+  attribute acl-in ref acl = ip-access-group.acl where direction = in
+  attribute acl-out ref acl = ip-access-group.acl where direction = out
+  attribute subnet derived subnet prefix
+  attribute ospf-effective-area derived ospf-area area
+  attribute link-peer derived link-peer ref interface
+
+object peer-group
+  key group from peer-group
+  attribute remote-as = peer-group-remote-as.asn
+  attribute update-source ref interface = peer-group-update-source.interface
+  attribute route-reflector-client flag peer-group-route-reflector-client
+
+object bgp-neighbor
+  key peer from neighbor-remote-as neighbor-peer-group neighbor-activate
+  attribute remote-as = neighbor-remote-as.asn
+  attribute peer-group ref peer-group = neighbor-peer-group.group
+  attribute update-source ref interface = neighbor-update-source.interface
+  attribute activated flag neighbor-activate
+  attribute next-hop-self flag neighbor-next-hop-self
+  attribute route-reflector-client flag neighbor-route-reflector-client
+  attribute shutdown flag neighbor-shutdown
+  attribute route-map-in ref route-map = neighbor-route-map.map where direction = in
+  attribute route-map-out ref route-map = neighbor-route-map.map where direction = out
+  attribute peer-router derived address-owner ref router
+  attribute effective-remote-as derived effective-remote-as asn
+
+object bgp-network
+  key network mask from bgp-network
+  attribute prefix derived network-prefix prefix
+
+object static-route
+  key network mask from static-route-interface static-route-next-hop
+  attribute interface ref interface = static-route-interface.interface
+  attribute next-hop = static-route-next-hop.next-hop
+  attribute prefix derived network-prefix prefix
+
+object route-map
+  key name from route-map
+
+object route-map-entry
+  key name sequence from route-map
+  attribute action = route-map.action
+  attribute match-prefix-list ref prefix-list = match-prefix-list.list
+  attribute match-community ref community-list = match-community.list
+  attribute match-tag = match-tag.tag
+  attribute local-preference = set-local-preference.preference
+  attribute metric = set-metric.metric
+  attribute as-path-prepend many = set-as-path-prepend.asns
+  attribute communities many = set-community.communities
+  attribute next-hop = set-next-hop.next-hop
+  attribute tag = set-tag.tag
+
+object prefix-list
+  key name from prefix-list-entry prefix-list-entry-le prefix-list-entry-ge-le
+
+object prefix-list-entry
+  key name sequence from prefix-list-entry prefix-list-entry-le prefix-list-entry-ge-le
+  attribute action = prefix-list-entry.action prefix-list-entry-le.action prefix-list-entry-ge-le.action
+  attribute prefix = prefix-list-entry.prefix prefix-list-entry-le.prefix prefix-list-entry-ge-le.prefix
+  attribute ge = prefix-list-entry-ge-le.ge
+  attribute le = prefix-list-entry-le.le prefix-list-entry-ge-le.le
+
+object community-list
+  key name from community-list
+  attribute action = community-list.action
+  attribute communities many = community-list.communities
+
+object acl
+  key name from access-list
+
+relation bgp-session symmetric
+  role local bgp-neighbor each
+  role remote bgp-neighbor optional
+  join remote.router = local.peer-router
+  join local.router = remote.peer-router
+  require hard exists remote
+  require hard equal local.effective-remote-as remote.router.bgp-asn
+
+relation bgp-activation
+  role neighbor bgp-neighbor each
+  require hard exists neighbor.activated when neighbor.router.bgp-ipv4-unicast-off
+
+relation bgp-policy
+  role neighbor bgp-neighbor each
+  require hard resolves neighbor.peer-group
+  require hard resolves neighbor.update-source
+  require hard resolves neighbor.route-map-in
+  require hard resolves neighbor.route-map-out
+
+relation peer-group-policy
+  role group peer-group each
+  require hard resolves group.update-source
+
+relation bgp-origination
+  role origin bgp-network each
+  role route static-route optional
+  join route.router = origin.router
+  join route.network = origin.network
+  join route.mask = origin.mask
+  require soft exists route
+
+relation link symmetric
+  role a interface each
+  role b interface optional
+  join b = a.link-peer
+  require hard exists b
+  require hard equal a.subnet b.subnet
+  require soft agree a.ospf-effective-area b.ospf-effective-area
+  require soft agree a.ospf-network-type b.ospf-network-type
+  require soft agree a.isis-enabled b.isis-enabled
+  require soft agree a.isis-circuit-type b.isis-circuit-type
+
+relation interface-filter
+  role interface interface each
+  require hard resolves interface.acl-in
+  require hard resolves interface.acl-out
+
+relation route-map-match
+  role entry route-map-entry each
+  require hard resolves entry.match-prefix-list
+  require hard resolves entry.match-community
+
+relation redistribution
+  role router router each
+  require hard resolves router.ospf-redistribution
+
+relation router-identity
+  role router router each
+  require hard distinct router.hostname
+  require hard distinct router.bgp-router-id
+  require hard distinct router.ospf-router-id
+  require hard distinct router.isis-net
+
+relation address-identity
+  role interface interface each
+  require hard distinct interface.address
+
+domain neighbor-remote-as asn related bgp-session remote.router.bgp-asn
+domain neighbor-remote-as asn values router.bgp-asn in network
+domain neighbor-remote-as peer values interface.address in network
+domain neighbor-peer-group group names peer-group in router
+domain neighbor-activate peer values bgp-neighbor.peer in router
+domain neighbor-route-map map names route-map in router
+domain neighbor-route-map direction literals
+domain neighbor-update-source interface names interface in router
+domain peer-group-remote-as asn values router.bgp-asn in network
+domain peer-group-update-source interface names interface in router
+domain ip-address address fresh
+domain ip-address mask values interface.mask in neighbours
+domain ip-ospf-area area related link b.ospf-effective-area
+domain ip-ospf-area area values interface.ospf-area in router
+domain ip-ospf-area process values router.ospf-process in router
+domain ip-ospf-cost cost values interface.ospf-cost in neighbours
+domain ip-ospf-network type literals
+domain isis-circuit-type level literals
+domain isis-metric metric values interface.isis-metric in neighbours
+domain ip-access-group acl names acl in router
+domain ip-access-group direction literals
+domain acl-host action literals
+domain acl-network action literals
+domain acl-any action literals
+domain route-map action literals
+domain route-map name fresh
+domain prefix-list-entry action literals
+domain prefix-list-entry prefix verifier destination
+domain prefix-list-entry-le action literals
+domain prefix-list-entry-le prefix verifier destination
+domain prefix-list-entry-ge-le action literals
+domain community-list action literals
+domain bgp-network network,mask verifier destination
+domain static-route-interface network,mask verifier destination
+domain static-route-interface interface names interface in router
+domain ospf-network network,wildcard values interface.subnet in router
+domain ospf-network area values interface.ospf-area in router
+domain ospf-passive-interface interface names interface in router
+domain isis-passive-interface interface names interface in router
+domain match-prefix-list list names prefix-list in router
+domain match-community list names community-list in router
+domain set-local-preference preference values route-map-entry.local-preference in network
+domain set-metric metric values route-map-entry.metric in network

@@ -1,0 +1,54 @@
+.ConfigViewer {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ConfigViewer-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 580px;
+  padding: 8px;
+}
+
+.ConfigViewer-list ul {
+  flex: 1;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.ConfigViewer-router {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ConfigViewer-router:hover {
+  background: var(--neutral-soft);
+}
+
+.ConfigViewer-router.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.ConfigViewer-changed {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ConfigViewer-text {
+  min-width: 0;
+}

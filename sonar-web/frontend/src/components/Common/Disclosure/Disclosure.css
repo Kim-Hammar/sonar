@@ -1,0 +1,45 @@
+.Disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.Disclosure + .Disclosure {
+  margin-top: 8px;
+}
+
+.Disclosure-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.Disclosure-chevron {
+  flex: none;
+  color: var(--subtle);
+  transition: transform 0.12s ease;
+}
+
+.Disclosure.open .Disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.Disclosure-title {
+  font-weight: 500;
+}
+
+.Disclosure-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.Disclosure-body {
+  padding: 0 10px 10px;
+}

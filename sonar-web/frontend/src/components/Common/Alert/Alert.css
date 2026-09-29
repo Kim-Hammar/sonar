@@ -1,0 +1,24 @@
+.Alert {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: var(--radius-small);
+}
+
+.Alert.bad {
+  border-color: #f5c2bd;
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.Alert.warn {
+  border-color: #f4d7a8;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.Alert.info {
+  border-color: #c9d9fb;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}

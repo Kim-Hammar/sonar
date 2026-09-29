@@ -1,0 +1,49 @@
+.Inspector-summary {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.Inspector-usage {
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+
+.Inspector-heading {
+  margin: 20px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.Inspector-subheading {
+  margin: 10px 0 6px;
+  font-size: 12px;
+}
+
+.Inspector-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.Inspector-traces {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.Inspector-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.Inspector-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

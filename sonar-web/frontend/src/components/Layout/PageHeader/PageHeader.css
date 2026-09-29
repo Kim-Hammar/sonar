@@ -1,0 +1,32 @@
+.PageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.PageHeader-text {
+  min-width: 0;
+}
+
+.PageHeader-eyebrow {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.PageHeader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.PageHeader-actions {
+  display: flex;
+  gap: 8px;
+}

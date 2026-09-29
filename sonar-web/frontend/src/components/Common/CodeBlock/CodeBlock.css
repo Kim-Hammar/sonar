@@ -1,0 +1,28 @@
+.CodeBlock {
+  margin: 0;
+  overflow: auto;
+  padding: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-muted);
+  line-height: 1.55;
+}
+
+.CodeBlock-line {
+  display: flex;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.CodeBlock-line.marked {
+  background: var(--accent-soft);
+}
+
+.CodeBlock-number {
+  flex: none;
+  width: 3.5em;
+  padding-right: 12px;
+  color: var(--subtle);
+  text-align: right;
+  user-select: none;
+}

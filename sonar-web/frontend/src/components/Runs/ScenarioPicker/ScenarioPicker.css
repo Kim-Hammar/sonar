@@ -1,0 +1,40 @@
+.ScenarioPicker {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.ScenarioPicker-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ScenarioPicker-bar .input {
+  flex: 1;
+}
+
+.ScenarioPicker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 2px 12px;
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  list-style: none;
+}
+
+.ScenarioPicker-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.ScenarioPicker-count {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}

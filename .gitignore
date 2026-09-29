@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+build/
+out/
+/third_party/batfish/
+node_modules/
+/sonar-web/frontend/dist/
+coverage/
+.idea/
+*.iml
+.vscode/
+.DS_Store
