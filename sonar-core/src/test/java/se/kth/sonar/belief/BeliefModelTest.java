@@ -42,7 +42,8 @@ class BeliefModelTest {
     RegionAssessment assessment =
         new RegionAssessment(Distribution.of(Map.of(A, 0.75, B, 0.25)), 0.5);
     BeliefState belief = model.afterAssessment(start(), AB, assessment);
-    assertThat(belief.isAssessed(AB.id())).isTrue();
+    assertThat(belief.isAssessed(A)).isTrue();
+    assertThat(belief.isAssessed(B)).isTrue();
     assertThat(belief.odds()).containsEntry(A, 0.75).containsEntry(B, 0.25).doesNotContainKey(C);
     Distribution<Region.Id> posterior = belief.posterior();
     assertThat(posterior.probability(A) / posterior.probability(C)).isCloseTo(0.375, within(1e-12));
@@ -52,7 +53,8 @@ class BeliefModelTest {
   @Test
   void aNeutralAssessmentOnlyMarksThePartition() {
     BeliefState belief = model.afterNeutralAssessment(start(), AB);
-    assertThat(belief.isAssessed(AB.id())).isTrue();
+    assertThat(belief.isAssessed(A)).isTrue();
+    assertThat(belief.isAssessed(B)).isTrue();
     assertThat(belief.posterior()).isEqualTo(start().posterior());
   }
 

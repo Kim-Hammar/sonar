@@ -6,7 +6,9 @@ import FieldLabel from '../../Common/FieldLabel/FieldLabel'
 import { HINTS } from '../../Common/hints'
 import Tabs from '../../Common/Tabs/Tabs'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
+import BatfishPanel from '../BatfishPanel/BatfishPanel'
 import ConfigViewer from '../ConfigViewer/ConfigViewer'
+import SearchPanel from '../SearchPanel/SearchPanel'
 import SpecificationTable from '../SpecificationTable/SpecificationTable'
 import TopologyGraph from '../TopologyGraph/TopologyGraph'
 import './ScenarioPage.css'
@@ -58,7 +60,9 @@ function ScenarioView({ name }) {
         tabs={[
           { id: 'topology', label: 'Topology' },
           { id: 'specifications', label: 'Specifications' },
-          { id: 'configurations', label: 'Configurations' }
+          { id: 'configurations', label: 'Configurations' },
+          { id: 'batfish', label: 'Batfish' },
+          { id: 'search', label: 'Search space' }
         ]}
         active={tab}
         onChange={(id) => setParams({ tab: id })}
@@ -85,27 +89,45 @@ function ScenarioView({ name }) {
           )}
         </>
       )}
-      {tab === 'specifications' && summary && (
-        <>
-          <div className="ScenarioPage-percent">
-            <FieldLabel htmlFor="scenario-percent" hint={HINTS.scenarios.specificationFile}>
-              Specification file
-            </FieldLabel>
-            <select
-              id="scenario-percent"
-              className="input"
-              value={percent || ''}
-              onChange={(event) => setChosenPercent(Number(event.target.value))}
-            >
-              {available.map((value) => (
-                <option key={value} value={value}>
-                  {value}%
-                </option>
-              ))}
-            </select>
-          </div>
-          {rows ? <SpecificationTable rows={rows} /> : <div className="muted">Loading…</div>}
-        </>
+      {(tab === 'specifications' || tab === 'batfish' || tab === 'search') && summary && (
+        <div className="ScenarioPage-percent">
+          <FieldLabel htmlFor="scenario-percent" hint={HINTS.scenarios.specificationFile}>
+            Specification file
+          </FieldLabel>
+          <select
+            id="scenario-percent"
+            className="input"
+            value={percent || ''}
+            onChange={(event) => setChosenPercent(Number(event.target.value))}
+          >
+            {available.map((value) => (
+              <option key={value} value={value}>
+                {value}%
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {tab === 'specifications' &&
+        summary &&
+        (rows ? <SpecificationTable rows={rows} /> : <div className="muted">Loading…</div>)}
+      {tab === 'batfish' && summary && percent && (
+        <BatfishPanel
+          key={percent}
+          scenario={name}
+          percent={percent}
+          view={params.get('view') || 'specifications'}
+          onView={(view) => setParams({ tab, view })}
+        />
+      )}
+      {tab === 'search' && summary && percent && (
+        <SearchPanel
+          key={percent}
+          scenario={name}
+          percent={percent}
+          region={params.get('region')}
+          onRegion={(region) => setParams(region ? { tab, region } : { tab })}
+        />
       )}
       {tab === 'configurations' && topology && (
         <ConfigViewer

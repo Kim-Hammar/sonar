@@ -73,8 +73,7 @@ public final class Adoption {
         candidates.stream()
             .filter(c -> c.verification().verdict().improvesOn(state.verification().verdict()))
             .sorted(
-                Comparator.comparingInt(
-                        (Verified c) -> c.verification().verdict().unresolved().size())
+                Comparator.comparingInt((Verified c) -> c.verification().verdict().loss())
                     .thenComparingInt(c -> c.hypothesis().cost())
                     .thenComparing(c -> c.hypothesis().support())
                     .thenComparing(c -> c.hypothesis().id()))

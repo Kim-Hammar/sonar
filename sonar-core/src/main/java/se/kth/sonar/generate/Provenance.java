@@ -19,6 +19,26 @@ public sealed interface Provenance {
   }
 
   /**
+   * A value inferred from formal verifier evidence and typed program semantics.
+   *
+   * @param analysis the analysis that inferred the value
+   */
+  record Inferred(String analysis) implements Provenance {
+    /** Checks that the analysis is named. */
+    public Inferred {
+      Objects.requireNonNull(analysis, "analysis");
+      if (analysis.isBlank()) {
+        throw new IllegalArgumentException("an inferred value names its analysis");
+      }
+    }
+
+    @Override
+    public ValueSupport support() {
+      return ValueSupport.EVIDENCED;
+    }
+  }
+
+  /**
    * The values come from a domain rule.
    *
    * @param rule the rule

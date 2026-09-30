@@ -39,7 +39,12 @@ tests tagged `audit` in `sonar-app` and are excluded from the ordinary test run.
 The server listens on `127.0.0.1:8080`; `--port` and `--host` change that. The decision model's
 API key is read from `OPENROUTER_API_KEY` in the server's environment. Runs are stored under
 `<output>/runs` and stay available after a restart; runs of `sonar repair` with the same output
-directory appear in the interface too.
+directory appear in the interface too. A scenario's Batfish tab verifies its faulty configurations
+on demand with an engine of the server's own and shows the state of every specification with its
+forwarding traces, the forwarding table, and the BGP routes to the specified destinations; these
+results are kept in memory until the server stops. The Search space tab builds the regions and the
+prior the agent would start from, with the same components a run uses, and generates the candidate
+repairs of a region on request.
 
 ## Modules
 

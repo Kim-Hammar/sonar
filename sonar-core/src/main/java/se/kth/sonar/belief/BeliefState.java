@@ -6,7 +6,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import se.kth.sonar.common.Distribution;
-import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 
 /**
@@ -20,7 +19,7 @@ import se.kth.sonar.search.Region;
  * @param odds the decision model's odds for each assessed region
  * @param survival the share of each region's candidate mass that is not yet ruled out
  * @param evidence the support from near misses for each region
- * @param assessed the partitions the decision model has assessed
+ * @param assessed the regions the decision model has assessed in a common comparison
  * @param epoch the state the belief refers to
  */
 public record BeliefState(
@@ -28,7 +27,7 @@ public record BeliefState(
     Map<Region.Id, Double> odds,
     Map<Region.Id, Double> survival,
     Map<Region.Id, Double> evidence,
-    Set<Partition.Id> assessed,
+    Set<Region.Id> assessed,
     int epoch) {
 
   /** Copies the collections and checks the components. */
@@ -65,9 +64,9 @@ public record BeliefState(
         * evidence.getOrDefault(region, 1.0);
   }
 
-  /** Returns whether {@code partition} has been assessed. */
-  public boolean isAssessed(Partition.Id partition) {
-    return assessed.contains(partition);
+  /** Returns whether {@code region} has been assessed in this state. */
+  public boolean isAssessed(Region.Id region) {
+    return assessed.contains(region);
   }
 
   /** Returns this belief without {@code regions}, which keeps the ratios of the others. */

@@ -18,7 +18,7 @@ function duration(run, now) {
   return formatDuration((run.finished || now) - run.started)
 }
 
-/** Every run, newest first, refreshed every few seconds. */
+/** Every agent execution, newest first, refreshed every few seconds. */
 export default function RunsPage() {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
@@ -50,13 +50,13 @@ export default function RunsPage() {
     {
       id: 'name',
       header: 'Name',
-      hint: HINTS.runs.name,
+      hint: HINTS.executions.name,
       cell: (run) => <span className="RunsPage-name">{run.name}</span>
     },
     {
       id: 'status',
       header: 'Status',
-      hint: HINTS.runs.status,
+      hint: HINTS.executions.status,
       cell: (run) => (
         <span className="RunsPage-status">
           <StatusBadge status={run.status} />
@@ -67,20 +67,20 @@ export default function RunsPage() {
     {
       id: 'scenarios',
       header: 'Scenarios',
-      hint: HINTS.runs.scenarios,
+      hint: HINTS.executions.scenarios,
       align: 'right',
       cell: (run) => run.scenarios.length
     },
     {
       id: 'created',
       header: 'Created',
-      hint: HINTS.runs.created,
+      hint: HINTS.executions.created,
       cell: (run) => formatDateTime(run.created)
     },
     {
       id: 'duration',
       header: 'Duration',
-      hint: HINTS.runs.duration,
+      hint: HINTS.executions.duration,
       align: 'right',
       cell: (run) => duration(run, now)
     }
@@ -89,25 +89,26 @@ export default function RunsPage() {
   return (
     <div className="page">
       <PageHeader
-        title="Runs"
+        title="Agent executions"
         actions={
-          <Link to="/runs/new" className="button primary">
+          <Link to="/executions/new" className="button primary">
             <Plus size={16} />
-            New run
+            New agent execution
           </Link>
         }
       />
       <Alert>{error}</Alert>
       {runs && runs.length === 0 && (
         <Empty
-          title="No runs yet"
+          title="No agent executions yet"
           action={
-            <Link to="/runs/new" className="button primary">
-              Start a run
+            <Link to="/executions/new" className="button primary">
+              Start an agent execution
             </Link>
           }
         >
-          A run repairs one or more scenarios and shows its progress here as it happens.
+          An agent execution repairs one or more scenarios and shows its progress here as it
+          happens.
         </Empty>
       )}
       {runs && runs.length > 0 && (
@@ -115,7 +116,7 @@ export default function RunsPage() {
           columns={columns}
           rows={runs}
           rowKey={(run) => run.id}
-          onRowClick={(run) => navigate(`/runs/${run.id}`)}
+          onRowClick={(run) => navigate(`/executions/${run.id}`)}
         />
       )}
     </div>

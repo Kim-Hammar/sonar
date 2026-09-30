@@ -9,6 +9,7 @@ object router
   attribute ospf-process = router-ospf.process
   attribute ospf-router-id = ospf-router-id.id
   attribute ospf-redistribution ref route-map = ospf-redistribute-bgp.map ospf-redistribute-bgp-metric.map
+  attribute ospf-redistributed-asn = ospf-redistribute-bgp.asn ospf-redistribute-bgp-metric.asn
   attribute isis-process = router-isis.process
   attribute isis-net = isis-net.net
   attribute isis-level = isis-is-type.level
@@ -75,6 +76,7 @@ object static-route
 
 object route-map
   key name from route-map
+  attribute used derived route-map-use flag
 
 object route-map-entry
   key name sequence from route-map
@@ -151,9 +153,13 @@ relation link symmetric
   require soft absent a.shutdown
   require soft exists a.igp-enabled when a.igp-peer
   require soft agree a.ospf-effective-area b.ospf-effective-area
+  require soft agree a.ospf-cost b.ospf-cost
   require soft agree a.ospf-network-type b.ospf-network-type
+  require convention exists a.ospf-cost when a.ospf-effective-area
   require soft agree a.isis-enabled b.isis-enabled
   require soft agree a.isis-circuit-type b.isis-circuit-type
+  require soft agree a.isis-metric b.isis-metric
+  require convention exists a.isis-metric when a.isis-enabled
   require soft equal a.router.isis-area b.router.isis-area when a.isis-level-1
 
 relation interface-filter
@@ -170,6 +176,11 @@ relation route-map-match
 relation redistribution
   role router router each
   require hard resolves router.ospf-redistribution
+  require hard equal router.ospf-redistributed-asn router.bgp-asn when router.ospf-redistributed-asn
+
+relation route-map-liveness
+  role map route-map each
+  require soft exists map.used
 
 relation bgp-design
   role router router each

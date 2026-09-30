@@ -11,18 +11,30 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import se.kth.sonar.common.ContentHash;
+import se.kth.sonar.execution.ContentCache;
 import se.kth.sonar.execution.ExecutionContext;
 import se.kth.sonar.generate.Admissibility;
+import se.kth.sonar.generate.BgpIncidenceGenerator;
+import se.kth.sonar.generate.BgpSessionCutGenerator;
 import se.kth.sonar.generate.Bounds;
 import se.kth.sonar.generate.ClosureEngine;
 import se.kth.sonar.generate.EditOperator;
 import se.kth.sonar.generate.Hypothesis;
+import se.kth.sonar.generate.IdentityRefactoring;
+import se.kth.sonar.generate.PolicyCutGenerator;
+import se.kth.sonar.generate.ProtocolTransferGenerator;
 import se.kth.sonar.generate.SeedGenerator;
+import se.kth.sonar.network.Prefix;
+import se.kth.sonar.program.BgpIncidenceSet;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Requirement;
+import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
+import se.kth.sonar.state.BgpSessionCut;
+import se.kth.sonar.state.PolicyCut;
+import se.kth.sonar.state.ProtocolTransfer;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.state.RouterEvidence;
 import se.kth.sonar.text.RouterId;
@@ -38,12 +50,18 @@ import se.kth.sonar.text.RouterId;
  * every region whose configurations are unchanged.
  */
 public final class SearchSpaceBuilder {
-  private static final int RELATION_BOUND = 4;
+  private static final int RELATION_BOUND = 16;
   private static final int SITE_BOUND_PER_STATEMENT = 2;
 
   private final SeedGenerator seeds;
   private final ClosureEngine closure;
   private final Admissibility admissibility;
+  private final BgpIncidenceGenerator incidences;
+  private final BgpSessionCutGenerator sessionCuts;
+  private final ProtocolTransferGenerator transfers;
+  private final PolicyCutGenerator policyCuts;
+  private final ContentCache<Map<ProgramObject.Ref, Set<Prefix>>> cutTargets =
+      new ContentCache<>(64);
   private final SearchSpace.Capacity capacity;
   private final Bounds bounds;
   private final ExecutionContext context;
@@ -59,6 +77,10 @@ public final class SearchSpaceBuilder {
     this.seeds = Objects.requireNonNull(seeds, "seeds");
     this.closure = Objects.requireNonNull(closure, "closure");
     this.admissibility = Objects.requireNonNull(admissibility, "admissibility");
+    this.incidences = new BgpIncidenceGenerator(seeds);
+    this.sessionCuts = new BgpSessionCutGenerator();
+    this.transfers = new ProtocolTransferGenerator(closure);
+    this.policyCuts = new PolicyCutGenerator(seeds);
     this.capacity = Objects.requireNonNull(capacity, "capacity");
     this.bounds = Objects.requireNonNull(bounds, "bounds");
     this.context = Objects.requireNonNull(context, "context");
@@ -70,6 +92,8 @@ public final class SearchSpaceBuilder {
     Map<RouterId, List<Specification>> implicated = RouterEvidence.of(state).unresolvedByRouter();
     List<Region> regions = new ArrayList<>();
     Set<Region.Id> ids = new HashSet<>();
+    Map<ProgramObject.Ref, Set<Prefix>> missingPermits =
+        cutTargets.get(state.verification().digest(), () -> PolicyCut.missingPermitTargets(state));
     for (RelationInstance instance : program.violated()) {
       Region.Id id =
           new Region.Id("relation:" + instance.relation() + ":" + instance.id().abbreviated());
@@ -78,7 +102,7 @@ public final class SearchSpaceBuilder {
       }
       List<Specification> targets = new ArrayList<>();
       Map<RouterId, ContentHash> reads = new LinkedHashMap<>();
-      for (RouterId router : instance.routers()) {
+      for (RouterId router : instance.dependencyRouters()) {
         reads.put(router, state.snapshot().text(router).digest());
         implicated
             .getOrDefault(router, List.of())
@@ -92,6 +116,69 @@ public final class SearchSpaceBuilder {
       regions.add(
           new RelationRegion(
               id, instance, targets, reads, new Region.Hypotheses.Deferred(RELATION_BOUND)));
+    }
+    for (BgpSessionCut cut : BgpSessionCut.infer(state)) {
+      RelationInstance instance = cut.session();
+      Region.Id id = new Region.Id("relation:suppress:bgp-session:" + instance.id().abbreviated());
+      if (!ids.add(id)) {
+        continue;
+      }
+      Map<RouterId, ContentHash> reads = new LinkedHashMap<>();
+      for (RouterId router : instance.dependencyRouters()) {
+        reads.put(router, state.snapshot().text(router).digest());
+      }
+      regions.add(
+          new RelationRegion(
+              id,
+              instance,
+              cut.targets(),
+              reads,
+              RelationRegion.Goal.SUPPRESS,
+              new Region.Hypotheses.Deferred(1)));
+    }
+    Set<RouterId> waypointSources = new LinkedHashSet<>();
+    for (Specification specification : state.verification().verdict().unresolved()) {
+      if (specification.predicate() instanceof ForwardingPredicate.Waypointing waypointing) {
+        waypointSources.add(waypointing.source());
+      }
+    }
+    for (BgpIncidenceSet incidence :
+        BgpIncidenceSet.infer(program, implicated.keySet(), waypointSources)) {
+      Region.Id id = new Region.Id("incidence:bgp:" + incidence.id().abbreviated());
+      if (!ids.add(id)) {
+        continue;
+      }
+      List<Specification> targets = new ArrayList<>();
+      Map<RouterId, ContentHash> reads = new LinkedHashMap<>();
+      for (RouterId router : incidence.routers()) {
+        reads.put(router, state.snapshot().text(router).digest());
+        for (Specification specification : implicated.getOrDefault(router, List.of())) {
+          if (!targets.contains(specification)) {
+            targets.add(specification);
+          }
+        }
+      }
+      int bound = Math.min(bounds.maxHypothesesPerRegion(), incidence.clients().size() + 8);
+      regions.add(
+          new IncidenceRegion(
+              id, incidence, targets, reads, new Region.Hypotheses.Deferred(bound)));
+    }
+    for (ProtocolTransfer transfer : ProtocolTransfer.infer(state)) {
+      Region.Id id =
+          new Region.Id("transfer:" + ContentHash.of(transfer.policy().toString()).abbreviated());
+      if (!ids.add(id)) {
+        continue;
+      }
+      RouterId router = transfer.policy().router();
+      int bound =
+          Math.min(
+              bounds.maxHypothesesPerRegion(), Math.max(1, 1 + 2 * transfer.blockers().size()));
+      regions.add(
+          new TransferRegion(
+              id,
+              transfer,
+              Map.of(router, state.snapshot().text(router).digest()),
+              new Region.Hypotheses.Deferred(bound)));
     }
     for (Map.Entry<RouterId, List<Specification>> entry : implicated.entrySet()) {
       RouterId router = entry.getKey();
@@ -107,7 +194,9 @@ public final class SearchSpaceBuilder {
         int bound =
             Math.min(
                 bounds.maxHypothesesPerRegion(),
-                1 + SITE_BOUND_PER_STATEMENT * object.statements().size());
+                1
+                    + SITE_BOUND_PER_STATEMENT * object.statements().size()
+                    + missingPermits.getOrDefault(object.ref(), Set.of()).size());
         regions.add(
             new SiteRegion(
                 id,
@@ -123,28 +212,48 @@ public final class SearchSpaceBuilder {
   /** Returns {@code region} with its admitted candidates. */
   public Region expand(Region region, RepairState state) {
     List<Hypothesis> generated =
-        switch (region) {
-          case SiteRegion site -> {
-            List<List<EditOperator>> proposals =
-                seeds.seeds(state.program(), state.verification(), site.site());
-            List<List<Hypothesis>> closed =
-                context.compute(
-                    proposals,
-                    seed -> closure.close(state.program(), state.verification(), seed, Set.of()));
-            List<Hypothesis> all = new ArrayList<>();
-            closed.forEach(all::addAll);
-            yield all;
-          }
-          case RelationRegion relation -> {
-            Set<ClosureEngine.Obligation> obligations = new LinkedHashSet<>();
-            for (Requirement requirement : relation.instance().violated()) {
-              if (requirement.signals()) {
-                obligations.add(new ClosureEngine.Obligation(relation.instance(), requirement));
+        new ArrayList<>(
+            switch (region) {
+              case SiteRegion site -> {
+                List<List<EditOperator>> proposals =
+                    seeds.seeds(state.program(), state.verification(), site.site());
+                List<List<Hypothesis>> closed =
+                    context.compute(
+                        proposals,
+                        seed ->
+                            closure.close(state.program(), state.verification(), seed, Set.of()));
+                List<Hypothesis> all = new ArrayList<>();
+                closed.forEach(all::addAll);
+                all.addAll(
+                    policyCuts.generate(
+                        state.program(),
+                        site.site(),
+                        cutTargets
+                            .get(
+                                state.verification().digest(),
+                                () -> PolicyCut.missingPermitTargets(state))
+                            .getOrDefault(site.site(), Set.of())));
+                yield all;
               }
-            }
-            yield closure.close(state.program(), state.verification(), List.of(), obligations);
-          }
-        };
+              case RelationRegion relation -> {
+                if (relation.goal() == RelationRegion.Goal.SUPPRESS) {
+                  yield sessionCuts.generate(
+                      state.program(), new BgpSessionCut(relation.instance(), relation.targets()));
+                }
+                Set<ClosureEngine.Obligation> obligations = new LinkedHashSet<>();
+                for (Requirement requirement : relation.instance().violated()) {
+                  if (requirement.signals()) {
+                    obligations.add(new ClosureEngine.Obligation(relation.instance(), requirement));
+                  }
+                }
+                yield closure.close(state.program(), state.verification(), List.of(), obligations);
+              }
+              case IncidenceRegion incidence ->
+                  incidences.generate(state.program(), incidence.incidence());
+              case TransferRegion transfer ->
+                  transfers.generate(state.program(), state.verification(), transfer.transfer());
+            });
+    generated.addAll(IdentityRefactoring.complete(state.program(), generated));
     Map<ContentHash, Hypothesis> unique = new LinkedHashMap<>();
     for (Hypothesis hypothesis : generated) {
       unique.putIfAbsent(hypothesis.id(), hypothesis);

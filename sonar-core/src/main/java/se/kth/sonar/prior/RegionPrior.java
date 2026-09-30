@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SequencedMap;
 import se.kth.sonar.common.Distribution;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.SearchSpace;
@@ -29,6 +30,11 @@ public final class RegionPrior {
     return new RegionPrior(extended);
   }
 
+  /** Returns the factors, in the order they multiply. */
+  public List<PriorFactor> factors() {
+    return factors;
+  }
+
   /** Returns the prior over the regions of {@code space}, in region order. */
   public Distribution<Region.Id> over(SearchSpace space, RepairState state) {
     Map<Region.Id, Double> weights = new LinkedHashMap<>();
@@ -45,13 +51,27 @@ public final class RegionPrior {
    */
   public double weight(Region region, RepairState state) {
     double product = 1;
-    for (PriorFactor factor : factors) {
-      double weight = factor.weight(region, state);
-      if (!Double.isFinite(weight) || weight < 0) {
-        throw new IllegalStateException(factor + " gave weight " + weight + " to " + region.id());
-      }
+    for (double weight : breakdown(region, state).values()) {
       product *= weight;
     }
     return product;
+  }
+
+  /**
+   * Returns the weight each factor gives {@code region}, by factor name and in factor order.
+   *
+   * @throws IllegalStateException if a factor returns a negative or non-finite weight
+   */
+  public SequencedMap<String, Double> breakdown(Region region, RepairState state) {
+    SequencedMap<String, Double> weights = new LinkedHashMap<>();
+    for (PriorFactor factor : factors) {
+      double weight = factor.weight(region, state);
+      if (!Double.isFinite(weight) || weight < 0) {
+        throw new IllegalStateException(
+            factor.name() + " gave weight " + weight + " to " + region.id());
+      }
+      weights.put(factor.name(), weight);
+    }
+    return weights;
   }
 }

@@ -2,16 +2,16 @@ package se.kth.sonar.prior;
 
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import se.kth.sonar.execution.ContentCache;
-import se.kth.sonar.generate.Hypothesis;
-import se.kth.sonar.generate.Provenance;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.RelationEvaluator;
 import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.RelationType;
 import se.kth.sonar.relation.Requirement;
+import se.kth.sonar.search.IncidenceRegion;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.state.RepairState;
@@ -23,8 +23,10 @@ import se.kth.sonar.state.RepairState;
  * requirement that holds in {@code s} instances and is violated in {@code v} gives the region that
  * restores it the Jeffreys posterior odds {@code (s + 1/2) / (v + 1/2)}: a requirement that holds
  * everywhere but in one place strongly implicates that place, while one violated all over the
- * network says little. A region takes the largest odds over the requirements it restores, and at
- * least one, so no region loses support.
+ * network says little. A region takes the largest odds over the requirements expressed by the
+ * region itself, and at least one, so no region loses support. Candidate provenance is deliberately
+ * excluded: generating a deferred region is computation rather than evidence and therefore cannot
+ * change its prior.
  */
 public final class RelationFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -37,6 +39,11 @@ public final class RelationFactor implements PriorFactor {
   /** Creates a factor that checks requirements with {@code evaluator}. */
   public RelationFactor(RelationEvaluator evaluator) {
     this.evaluator = evaluator;
+  }
+
+  @Override
+  public String name() {
+    return "relation";
   }
 
   @Override
@@ -63,14 +70,14 @@ public final class RelationFactor implements PriorFactor {
         }
       }
     }
-    if (region.hypotheses() instanceof Region.Hypotheses.Admitted admitted) {
-      for (Hypothesis hypothesis : admitted.list()) {
-        for (Provenance.Restored restored : hypothesis.restores()) {
-          if (restored.requirement().signals()) {
-            result.add(new Restored(restored.relation(), restored.requirement()));
-          }
-        }
-      }
+    if (region instanceof IncidenceRegion) {
+      Requirement missingPeer =
+          new Requirement(
+              Requirement.Strength.SOFT,
+              new se.kth.sonar.relation.Constraint.Exists(
+                  new se.kth.sonar.relation.AttributePath("remote", List.of())),
+              java.util.Optional.empty());
+      result.add(new Restored("bgp-session", missingPeer));
     }
     return result;
   }

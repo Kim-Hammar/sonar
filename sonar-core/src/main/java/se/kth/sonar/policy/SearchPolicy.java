@@ -21,9 +21,14 @@ public interface SearchPolicy {
     /**
      * Ask the decision model to assess a partition.
      *
-     * @param partition the partition
+     * @param partition the regions compared in one calibrated question
      */
-    record Assess(Partition.Id partition) implements Action {}
+    record Assess(Partition partition) implements Action {
+      /** Checks the partition. */
+      public Assess {
+        Objects.requireNonNull(partition, "partition");
+      }
+    }
 
     /**
      * Generate the candidates of a region.

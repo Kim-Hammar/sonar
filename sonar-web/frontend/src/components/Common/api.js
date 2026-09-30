@@ -44,6 +44,48 @@ export const api = {
     request(`/api/scenarios/${name(scenario)}/specifications?percent=${percent}`),
   config: (scenario, router) =>
     requestText(`/api/scenarios/${name(scenario)}/routers/${name(router)}/config`),
+  verification: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/verification?percent=${percent}`),
+  verify: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/verification`, {
+      method: 'POST',
+      body: { percent }
+    }),
+  verifiedSpecifications: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/verification/specifications?percent=${percent}`),
+  verifiedTraces: (scenario, percent, specification) =>
+    request(
+      `/api/scenarios/${name(scenario)}/verification/traces?percent=${percent}&specification=${name(specification)}`
+    ),
+  verifiedForwarding: (
+    scenario,
+    percent,
+    { node = '', action = '', prefix = '', offset = 0, limit }
+  ) =>
+    request(
+      `/api/scenarios/${name(scenario)}/verification/forwarding?percent=${percent}&node=${name(node)}&action=${name(action)}&prefix=${name(prefix)}&offset=${offset}&limit=${limit}`
+    ),
+  verifiedRoutes: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/verification/routes?percent=${percent}`),
+  search: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/search?percent=${percent}`),
+  explore: (scenario, percent) =>
+    request(`/api/scenarios/${name(scenario)}/search`, { method: 'POST', body: { percent } }),
+  searchRegions: (
+    scenario,
+    percent,
+    { kind = '', router = '', partition = '', query = '', offset = 0, limit }
+  ) =>
+    request(
+      `/api/scenarios/${name(scenario)}/search/regions?percent=${percent}&kind=${name(kind)}&router=${name(router)}&partition=${name(partition)}&query=${name(query)}&offset=${offset}&limit=${limit}`
+    ),
+  searchRegion: (scenario, percent, id) =>
+    request(`/api/scenarios/${name(scenario)}/search/region?percent=${percent}&id=${name(id)}`),
+  expandRegion: (scenario, percent, id) =>
+    request(`/api/scenarios/${name(scenario)}/search/expand`, {
+      method: 'POST',
+      body: { percent, region: id }
+    }),
   runs: () => request('/api/runs'),
   run: (id) => request(`/api/runs/${name(id)}`),
   createRun: (body) => request('/api/runs', { method: 'POST', body }),

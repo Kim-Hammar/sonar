@@ -5,10 +5,10 @@ import './Sidebar.css'
 
 const ITEMS = [
   {
-    to: '/runs',
-    label: 'Runs',
+    to: '/executions',
+    label: 'Agent executions',
     icon: ListChecks,
-    active: (path) => path.startsWith('/runs') && path !== '/runs/new'
+    active: (path) => path.startsWith('/executions') && path !== '/executions/new'
   },
   {
     to: '/scenarios',
@@ -18,22 +18,22 @@ const ITEMS = [
   }
 ]
 
-/** The left navigation: a button to start a run, the pages, and the server's versions. */
+/** The left navigation: a button to start an agent execution, the pages, and the server's versions. */
 export default function Sidebar() {
   const { pathname } = useLocation()
   const info = useInfo()
   return (
     <nav className="Sidebar" aria-label="Main">
-      <Link to="/runs" className="Sidebar-brand">
+      <Link to="/executions" className="Sidebar-brand">
         <Radar size={20} strokeWidth={2.2} />
-        <span>sonar</span>
+        <span>Sonar</span>
       </Link>
       <Link
-        to="/runs/new"
-        className={pathname === '/runs/new' ? 'Sidebar-new active' : 'Sidebar-new'}
+        to="/executions/new"
+        className={pathname === '/executions/new' ? 'Sidebar-new active' : 'Sidebar-new'}
       >
         <Plus size={16} />
-        New run
+        New agent execution
       </Link>
       <ul className="Sidebar-items">
         {ITEMS.map((item) => {
@@ -55,7 +55,7 @@ export default function Sidebar() {
         {info && info.demo && <div className="Sidebar-demo">Demo mode</div>}
         {info && !info.unavailable && (
           <>
-            <div>sonar {info.sonar}</div>
+            <div>Sonar {info.sonar}</div>
             <div>Batfish {info.batfish}</div>
           </>
         )}

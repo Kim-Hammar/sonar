@@ -29,17 +29,14 @@ class BatfishScenarioProbe {
     RepairProblem problem = new ScenarioRepository(DATASET).load(name, 100);
     try (BatfishEngine engine = new BatfishEngine(new BatfishEngine.Settings(storage))) {
       String focus = System.getProperty("sonar.probe.destination", "");
-      DataPlaneEngine.Observation observation =
-          engine.analyze(
-              problem.initial(),
-              problem.specifications(),
-              rows -> {
-                for (ForwardingRow row : rows) {
-                  if (!focus.isEmpty() && row.prefix().toString().equals(focus)) {
-                    System.out.println("row " + row);
-                  }
-                }
-              });
+      DataPlaneInspector.Report report =
+          engine.inspect(problem.initial(), problem.specifications());
+      for (ForwardingEntry row : report.forwarding()) {
+        if (!focus.isEmpty() && row.prefix().equals(focus)) {
+          System.out.println("row " + row);
+        }
+      }
+      DataPlaneEngine.Observation observation = report.observation();
       Verdict verdict = problem.specifications().judge(observation.holding());
       for (Specification specification : verdict.unresolved()) {
         if (!focus.isEmpty() && specification.predicate().destination().toString().equals(focus)) {

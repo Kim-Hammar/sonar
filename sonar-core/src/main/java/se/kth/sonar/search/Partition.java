@@ -23,6 +23,18 @@ public record Partition(Id id, ContentHash signature, List<Region.Id> regions) {
   }
 
   /**
+   * Returns a transient decision cohort whose members are the currently strongest competitors. Its
+   * identity depends only on the ordered region identifiers, so the same comparison is never paid
+   * for twice in one state.
+   */
+  public static Partition comparison(List<Region.Id> regions) {
+    ContentHash.Builder digest = ContentHash.builder().add("decision-comparison");
+    regions.forEach(region -> digest.add(region.value()));
+    ContentHash signature = digest.build();
+    return new Partition(new Id("comparison-" + signature.abbreviated()), signature, regions);
+  }
+
+  /**
    * Identifies a partition.
    *
    * @param value the identifier text

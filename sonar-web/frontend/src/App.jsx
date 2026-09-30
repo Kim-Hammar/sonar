@@ -23,10 +23,10 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route element={<Layout />}>
-            <Route index element={<Navigate to="/runs" replace />} />
-            <Route path="runs" element={<RunsPage />} />
-            <Route path="runs/new" element={<NewRunPage />} />
-            <Route path="runs/:runId" element={<RunPage />} />
+            <Route index element={<Navigate to="/executions" replace />} />
+            <Route path="executions" element={<RunsPage />} />
+            <Route path="executions/new" element={<NewRunPage />} />
+            <Route path="executions/:runId" element={<RunPage />} />
             <Route path="scenarios" element={<ScenariosPage />} />
             <Route path="scenarios/:name" element={<ScenarioPage />} />
             <Route path="*" element={<NotFound />} />

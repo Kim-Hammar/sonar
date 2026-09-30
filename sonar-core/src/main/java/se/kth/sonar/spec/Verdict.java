@@ -35,32 +35,42 @@ public record Verdict(
 
   /** Returns whether every specification holds as required. */
   public boolean solved() {
-    return unresolved.isEmpty() && sideEffects.isEmpty();
+    return loss() == 0;
+  }
+
+  /** Returns the number of formal obligations that currently fail. */
+  public int loss() {
+    return failures().size();
   }
 
   /**
-   * Returns whether this verdict leaves a strict subset of the specifications that {@code before}
-   * left unresolved, without side effects.
+   * Returns whether this verdict strictly reduces formal loss without breaking another obligation
+   * that was originally intact.
+   *
+   * <p>A repair can expose a previously masked benchmark fault. Requiring the new unresolved set to
+   * be a subset of the old one rejects genuine progress in that case. Total formal loss is a
+   * well-founded objective; requiring the side-effect set not to grow separately preserves the
+   * contract for specifications that were designated intact.
    */
   public boolean improvesOn(Verdict before) {
-    Set<Specification> earlier = new HashSet<>(before.unresolved);
-    return sideEffects.isEmpty()
-        && unresolved.size() < earlier.size()
-        && earlier.containsAll(unresolved);
+    return loss() < before.loss() && new HashSet<>(before.sideEffects).containsAll(sideEffects);
   }
 
   /** Classifies the change from this verdict to {@code after}. */
   public Change changeTo(Verdict after) {
-    Set<Specification> nowUnresolved = new HashSet<>(after.unresolved);
-    Set<Specification> earlierUnresolved = new HashSet<>(unresolved);
-    Set<Specification> earlierSideEffects = new HashSet<>(sideEffects);
-    boolean fixedSome = unresolved.stream().anyMatch(s -> !nowUnresolved.contains(s));
-    boolean brokeSome =
-        after.unresolved.stream().anyMatch(s -> !earlierUnresolved.contains(s))
-            || after.sideEffects.stream().anyMatch(s -> !earlierSideEffects.contains(s));
+    Set<Specification> beforeFailures = failures();
+    Set<Specification> afterFailures = after.failures();
+    boolean fixedSome = beforeFailures.stream().anyMatch(s -> !afterFailures.contains(s));
+    boolean brokeSome = afterFailures.stream().anyMatch(s -> !beforeFailures.contains(s));
     if (fixedSome) {
       return brokeSome ? Change.MIXED : Change.IMPROVEMENT;
     }
     return brokeSome ? Change.REGRESSION : Change.NO_EFFECT;
+  }
+
+  private Set<Specification> failures() {
+    Set<Specification> result = new HashSet<>(unresolved);
+    result.addAll(sideEffects);
+    return result;
   }
 }

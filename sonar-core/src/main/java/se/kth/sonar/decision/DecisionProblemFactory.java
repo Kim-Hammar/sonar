@@ -20,15 +20,18 @@ import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.relation.ValueSupport;
+import se.kth.sonar.search.IncidenceRegion;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SearchSpace;
 import se.kth.sonar.search.SiteRegion;
+import se.kth.sonar.search.TransferRegion;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.spec.Verdict;
 import se.kth.sonar.state.RepairState;
+import se.kth.sonar.state.RouterEvidence;
 import se.kth.sonar.state.TransitionLedger;
 import se.kth.sonar.text.LineEdit;
 import se.kth.sonar.text.RouterId;
@@ -99,11 +102,19 @@ public final class DecisionProblemFactory {
           new DecisionProblem.Context.Section(
               "Setting",
               describer.setting(
-                  "Each option is a region: the candidate edits at one "
-                      + "place in the configuration. Decide which region holds an edit that fixes at "
+                  "Each option is a region: candidate edits to one coherent program object or "
+                      + "relation. Decide which region holds an edit that fixes at "
                       + "least one of the violated specifications below.")));
-      sections.add(describer.specifications(regions.getFirst().targets()));
-      sections.add(describer.evidence(regions.getFirst().targets()));
+      List<Specification> targets = new ArrayList<>();
+      for (Region region : regions) {
+        for (Specification target : region.targets()) {
+          if (!targets.contains(target)) {
+            targets.add(target);
+          }
+        }
+      }
+      sections.add(describer.specifications(targets));
+      sections.add(describer.evidence(targets));
       describer.excerpts(objects).ifPresent(sections::add);
       describer.relations(objects).ifPresent(sections::add);
       describer.feedback(relevant).ifPresent(sections::add);
@@ -221,6 +232,8 @@ public final class DecisionProblemFactory {
         }
       }
       int described = 0;
+      RouterEvidence routerEvidence = RouterEvidence.of(state);
+      Set<List<Object>> describedBoundaries = new LinkedHashSet<>();
       for (Prefix destination : destinations) {
         if (described++ == shown) {
           body.append("and ").append(destinations.size() - shown).append(" more destinations\n");
@@ -233,9 +246,37 @@ public final class DecisionProblemFactory {
             .append(forwarders.size())
             .append(" routers forward to it, ")
             .append(holders.size())
-            .append(" hold a BGP route\n");
+            .append(" hold a BGP route");
+        if (!forwarders.isEmpty() && forwarders.size() <= 12) {
+          body.append("; forwarders ").append(routerNames(forwarders));
+        }
+        if (!holders.isEmpty() && holders.size() <= 12) {
+          body.append("; BGP route holders ").append(routerNames(holders));
+        }
+        body.append('\n');
+        for (Specification target : targets) {
+          if (!target.predicate().destination().equals(destination)
+              || !RouterEvidence.noRouteAtSource(evidence, target.predicate())
+              || !describedBoundaries.add(
+                  List.of(target.predicate().source(), target.predicate().destination()))) {
+            continue;
+          }
+          Set<RouterEvidence.Link> frontier =
+              routerEvidence.routeFrontier(target.predicate().source(), destination);
+          if (!frontier.isEmpty()) {
+            body.append("route-propagation boundary from ")
+                .append(target.predicate().source().name())
+                .append(": ")
+                .append(frontier)
+                .append('\n');
+          }
+        }
       }
       return new DecisionProblem.Context.Section("Verifier evidence", body.toString().strip());
+    }
+
+    private static String routerNames(Set<RouterId> routers) {
+      return routers.stream().sorted().map(RouterId::name).toList().toString();
     }
 
     Optional<DecisionProblem.Context.Section> excerpts(Set<ProgramObject.Ref> objects) {
@@ -374,21 +415,40 @@ public final class DecisionProblemFactory {
                   });
         }
         case RelationRegion relation -> {
-          text.append("complete ").append(relation.instance().relation()).append(" (");
+          text.append(relation.goal() == RelationRegion.Goal.SUPPRESS ? "suppress " : "complete ")
+              .append(relation.instance().relation())
+              .append(" (");
           relation
               .instance()
               .roles()
               .forEach(
                   (role, ref) -> text.append(role).append(" = ").append(object(ref)).append(", "));
           text.setLength(text.length() - 2);
-          text.append(") which violates: ");
-          for (Requirement requirement : relation.instance().violated()) {
-            if (requirement.signals()) {
-              text.append(requirement.text()).append("; ");
+          if (relation.goal() == RelationRegion.Goal.SUPPRESS) {
+            text.append(") traversed as the first hop of a formal isolation counterexample");
+          } else {
+            text.append(") which violates: ");
+            for (Requirement requirement : relation.instance().violated()) {
+              if (requirement.signals()) {
+                text.append(requirement.text()).append("; ");
+              }
             }
+            text.setLength(text.length() - 2);
           }
-          text.setLength(text.length() - 2);
         }
+        case IncidenceRegion incidence ->
+            text.append("complete the repeated BGP session incidence set for explicit reflector ")
+                .append(object(incidence.incidence().reflector()))
+                .append(" across ")
+                .append(incidence.incidence().clients().size())
+                .append(" implicated same-AS clients; the set is inferred from cluster identity, ")
+                .append("loopback ownership, and observed directional peer-group roles");
+        case TransferRegion transfer ->
+            text.append("repair the verifier-observed route transfer through ")
+                .append(object(transfer.transfer().policy()))
+                .append(" at a BGP/OSPF propagation boundary; ")
+                .append(transfer.transfer().blockers().size())
+                .append(" preceding deny clauses can intercept the affected routes");
       }
       if (region.hypotheses() instanceof Region.Hypotheses.Admitted admitted) {
         text.append("; ").append(admitted.bound()).append(" candidates");
@@ -427,6 +487,11 @@ public final class DecisionProblemFactory {
       switch (region) {
         case SiteRegion site -> objects.add(site.site());
         case RelationRegion relation -> objects.addAll(relation.instance().roles().values());
+        case IncidenceRegion incidence -> objects.addAll(incidence.incidence().objects());
+        case TransferRegion transfer -> {
+          objects.add(transfer.transfer().policy());
+          objects.addAll(transfer.transfer().blockers());
+        }
       }
       Set<ProgramObject.Ref> own = Set.copyOf(objects);
       for (RelationInstance instance : program.instances()) {

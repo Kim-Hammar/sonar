@@ -3,7 +3,23 @@
   min-height: 100%;
 }
 
+.Layout-column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .Layout-main {
   flex: 1;
-  min-width: 0;
+}
+
+.Layout-footer {
+  padding: 16px 32px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.Layout-footer a {
+  color: inherit;
 }

@@ -1,4 +1,3 @@
-import { ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
@@ -6,6 +5,7 @@ import CodeBlock, { prettyJson } from '../../Common/CodeBlock/CodeBlock'
 import DataTable from '../../Common/DataTable/DataTable'
 import DiffView from '../../Common/DiffView/DiffView'
 import Disclosure from '../../Common/Disclosure/Disclosure'
+import FlowTrace from '../../Common/FlowTrace/FlowTrace'
 import { describeEvent, formatCompact, formatNumber, STOP_LABELS } from '../../Common/format'
 import Hint from '../../Common/Hint/Hint'
 import { HINTS } from '../../Common/hints'
@@ -50,20 +50,7 @@ function Traces({ evidence }) {
       {evidence.traces.map((trace) => (
         <div key={trace.predicate} className="Inspector-trace">
           <div className="mono">{trace.predicate}</div>
-          {trace.flows.map((flow, index) => (
-            <div key={index} className="Inspector-flow">
-              {flow.hops.map((hop, hopIndex) => (
-                <span key={hopIndex} className="Inspector-hop">
-                  {hopIndex > 0 && <ChevronRight size={12} className="muted" />}
-                  <span className="mono">{hop}</span>
-                </span>
-              ))}
-              <StatusBadge
-                status={flow.disposition === 'accepted' ? 'fixed' : 'unresolved'}
-                label={flow.disposition}
-              />
-            </div>
-          ))}
+          <FlowTrace flows={trace.flows} />
         </div>
       ))}
     </div>
@@ -279,6 +266,13 @@ function Body({ detail }) {
                 hint: hints.bound,
                 align: 'right',
                 cell: (row) => formatNumber(row.bound)
+              },
+              {
+                id: 'prior',
+                header: 'Prior',
+                hint: HINTS.search.prior,
+                align: 'right',
+                cell: (row) => (row.prior === undefined ? '–' : `${(row.prior * 100).toFixed(1)}%`)
               }
             ]}
           />

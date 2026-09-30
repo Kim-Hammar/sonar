@@ -2,6 +2,7 @@ package se.kth.sonar.program;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +46,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
           "ospf-coverage",
           "network-prefix",
           "ospf-area",
+          "route-map-use",
           "subnet");
   private static final Pattern NAME_ASN = Pattern.compile("_as(\\d+)_");
   private static final int MAX_HOSTS = 4;
@@ -128,7 +130,63 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
         }
       }
     }
+    addIgpPeers(topology, objects, derived);
     return derived;
+  }
+
+  /**
+   * Adds the peer of every interface whose physical link is typed as an IGP relation. A design-AS
+   * equality types the ordinary intra-domain case. Matching configured protocol processes type the
+   * relation independently of BGP AS labels, which correctly models OSPF and IS-IS links that cross
+   * those labels without treating every physical link as an IGP adjacency.
+   */
+  private static void addIgpPeers(
+      Topology topology,
+      List<ProgramObject> objects,
+      Map<ProgramObject.Ref, Map<String, List<String>>> derived) {
+    Map<RouterId, ProgramObject> routers = new HashMap<>();
+    Map<ProgramObject.Ref, ProgramObject> byRef = new HashMap<>();
+    for (ProgramObject object : objects) {
+      byRef.put(object.ref(), object);
+      if (object.ref().type().equals(ObjectType.ROUTER)) {
+        routers.put(object.ref().router(), object);
+      }
+    }
+    for (ProgramObject object : objects) {
+      if (!object.ref().type().equals("interface")) {
+        continue;
+      }
+      Topology.Endpoint local =
+          new Topology.Endpoint(object.ref().router(), object.ref().key().getFirst());
+      Optional<Topology.Endpoint> peer = topology.peer(local);
+      if (peer.isEmpty()) {
+        continue;
+      }
+      ProgramObject.Ref peerRef =
+          new ProgramObject.Ref(
+              "interface", peer.get().router(), List.of(peer.get().interfaceName()));
+      if (!byRef.containsKey(peerRef)
+          || !igpCompatible(routers.get(local.router()), routers.get(peer.get().router()))) {
+        continue;
+      }
+      Map<String, List<String>> values =
+          new LinkedHashMap<>(derived.getOrDefault(object.ref(), Map.of()));
+      values.put("igp-peer", List.of(peerRef.toString()));
+      derived.put(object.ref(), Map.copyOf(values));
+    }
+  }
+
+  private static boolean igpCompatible(ProgramObject left, ProgramObject right) {
+    if (left == null || right == null) {
+      return false;
+    }
+    boolean sameDesignAs =
+        designAsn(left.ref().router())
+            .flatMap(asn -> designAsn(right.ref().router()).filter(asn::equals))
+            .isPresent();
+    boolean ospf = left.has("ospf-process") && right.has("ospf-process");
+    boolean isis = left.has("isis-process") && right.has("isis-process");
+    return sameDesignAs || ospf || isis;
   }
 
   private String routerRef(RouterId router) {
@@ -217,16 +275,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                           .toString())
               .map(List::of)
               .orElse(List.of());
-      case "igp-peer" ->
-          topology
-              .peer(new Topology.Endpoint(router, object.ref().key().getFirst()))
-              .filter(end -> designAsn(end.router()).equals(designAsn(router)))
-              .map(
-                  end ->
-                      new ProgramObject.Ref("interface", end.router(), List.of(end.interfaceName()))
-                          .toString())
-              .map(List::of)
-              .orElse(List.of());
+      case "igp-peer" -> List.of();
       case "effective-remote-as" -> {
         if (object.has("remote-as")) {
           yield object.values("remote-as");
@@ -313,8 +362,27 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
         }
         yield List.of();
       }
+      case "route-map-use" -> routeMapUsed(object, byRef) ? List.of("true") : List.of();
       default -> throw new IllegalArgumentException("unknown derived function " + function);
     };
+  }
+
+  /** Returns whether a route map has a typed control-plane use on its router. */
+  private static boolean routeMapUsed(
+      ProgramObject routeMap, Map<ProgramObject.Ref, ProgramObject> objects) {
+    String name = routeMap.ref().key().getFirst();
+    for (ProgramObject object : objects.values()) {
+      if (object.ref().type().equals("bgp-neighbor")
+          && (object.values("route-map-in").contains(name)
+              || object.values("route-map-out").contains(name))) {
+        return true;
+      }
+      if (object.ref().type().equals(ObjectType.ROUTER)
+          && object.values("ospf-redistribution").contains(name)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Returns the AS a router's name assigns it, if the name follows the naming convention. */
@@ -430,10 +498,129 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                 Map.of("net", List.of(target + "." + suffix))));
       }
       case "address-owner" -> peerRealisations(target, object, program);
+      case "loopback-address" -> loopbackRealisations(target, object, program);
       case "ospf-coverage" -> coverageRealisations(target, object, program);
       case "igp-enabled" -> igpRealisations(object, program);
+      case "route-map-use" -> routeMapUseRealisations(target, object, program);
       default -> List.of();
     };
+  }
+
+  /** Realises a router's loopback identity by changing Loopback0's address. */
+  private List<ProgramModel.Realisation> loopbackRealisations(
+      String target, ProgramObject router, ProgramModel program) {
+    ProgramObject.Ref loopback =
+        new ProgramObject.Ref("interface", router.ref().router(), List.of("Loopback0"));
+    Optional<ProgramObject> object = program.object(loopback);
+    if (object.isEmpty()) {
+      return List.of();
+    }
+    Production address = dialect.grammar().production("ip-address").orElseThrow();
+    return object.get().statements().stream()
+        .filter(
+            span ->
+                program.statements(loopback.router()).stream()
+                    .anyMatch(
+                        statement ->
+                            statement.span().equals(span)
+                                && statement.match().stream()
+                                    .anyMatch(match -> match.production().equals(address))))
+        .findFirst()
+        .map(
+            span ->
+                List.of(
+                    new ProgramModel.Realisation(
+                        address, Map.of("address", List.of(target)), loopback, span)))
+        .orElseGet(List::of);
+  }
+
+  /**
+   * Realises a definition-to-use edge for a route map. Redistribution is offered when the router
+   * runs both protocols; neighbor attachments follow, with physical peers first. These are all
+   * typed uses of the definition, and the decision model chooses among their concrete edits.
+   */
+  private List<ProgramModel.Realisation> routeMapUseRealisations(
+      String target, ProgramObject routeMap, ProgramModel program) {
+    if (!target.equals("true")) {
+      return List.of();
+    }
+    RouterId router = routeMap.ref().router();
+    String name = routeMap.ref().key().getFirst();
+    ProgramObject owner =
+        program.object(new ProgramObject.Ref(ObjectType.ROUTER, router, List.of())).orElseThrow();
+    List<ProgramModel.Realisation> result = new ArrayList<>();
+    if (owner.has("ospf-process") && owner.has("bgp-asn")) {
+      Map<String, List<String>> values =
+          Map.of("asn", owner.values("bgp-asn"), "map", List.of(name));
+      result.add(
+          new ProgramModel.Realisation(
+              dialect.grammar().production("ospf-redistribute-bgp-metric").orElseThrow(),
+              values,
+              owner.ref()));
+      result.add(
+          new ProgramModel.Realisation(
+              dialect.grammar().production("ospf-redistribute-bgp").orElseThrow(),
+              values,
+              owner.ref()));
+    }
+    Set<RouterId> physical = new HashSet<>(program.topology().neighbours(router));
+    List<ProgramObject> neighbors =
+        program.objectsOf(router).stream()
+            .filter(candidate -> candidate.ref().type().equals("bgp-neighbor"))
+            .sorted(
+                java.util.Comparator.comparing(
+                        (ProgramObject neighbor) ->
+                            !directTransport(neighbor, router, physical, program))
+                    .thenComparing(candidate -> candidate.ref().key().getFirst()))
+            .toList();
+    Production attachment = dialect.grammar().production("neighbor-route-map").orElseThrow();
+    for (ProgramObject neighbor : neighbors) {
+      for (String direction : List.of("in", "out")) {
+        result.add(
+            new ProgramModel.Realisation(
+                attachment,
+                Map.of(
+                    "peer", neighbor.ref().key(),
+                    "map", List.of(name),
+                    "direction", List.of(direction)),
+                neighbor.ref()));
+      }
+    }
+    return result;
+  }
+
+  /** Returns whether a neighbor address is the address at the far end of a physical link. */
+  private static boolean directTransport(
+      ProgramObject neighbor, RouterId local, Set<RouterId> physical, ProgramModel program) {
+    Optional<RouterId> peerRouter =
+        neighbor
+            .value("peer-router")
+            .filter(value -> ProgramObject.Ref.isReference(value, ObjectType.ROUTER))
+            .map(ProgramObject.Ref::parse)
+            .map(ProgramObject.Ref::router)
+            .filter(physical::contains);
+    if (peerRouter.isEmpty()) {
+      return false;
+    }
+    String peerAddress = neighbor.ref().key().getFirst();
+    for (Topology.Link link : program.topology().links()) {
+      Topology.Endpoint remote = null;
+      if (link.a().router().equals(local) && link.b().router().equals(peerRouter.get())) {
+        remote = link.b();
+      } else if (link.b().router().equals(local) && link.a().router().equals(peerRouter.get())) {
+        remote = link.a();
+      }
+      if (remote == null) {
+        continue;
+      }
+      ProgramObject.Ref interfaceRef =
+          new ProgramObject.Ref("interface", remote.router(), List.of(remote.interfaceName()));
+      if (program.object(interfaceRef).flatMap(object -> object.value("address")).stream()
+          .anyMatch(peerAddress::equals)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

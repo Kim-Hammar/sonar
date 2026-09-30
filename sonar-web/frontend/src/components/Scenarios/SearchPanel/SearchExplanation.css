@@ -1,0 +1,23 @@
+.SearchExplanation-lead {
+  max-width: 820px;
+  margin: 0 0 10px;
+  line-height: 1.55;
+}
+
+.SearchExplanation {
+  max-width: 820px;
+  margin: 0;
+  padding-left: 22px;
+  line-height: 1.55;
+}
+
+.SearchExplanation li {
+  margin: 6px 0;
+}
+
+.SearchExplanation-note {
+  max-width: 820px;
+  margin: 10px 0 0;
+  line-height: 1.55;
+  color: var(--muted);
+}

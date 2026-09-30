@@ -132,9 +132,8 @@ class ProgramModelTest {
     assertThat(links).hasSize(1);
     assertThat(links.getFirst().violated())
         .extracting(requirement -> requirement.constraint().toString())
-        .singleElement()
-        .asString()
-        .contains("ospf-effective-area");
+        .anySatisfy(value -> assertThat(value).contains("ospf-effective-area"))
+        .anySatisfy(value -> assertThat(value).contains("ospf-cost"));
     assertThat(model.instances("bgp-policy"))
         .filteredOn(instance -> !instance.satisfied())
         .extracting(instance -> instance.roles().get("neighbor").toString())

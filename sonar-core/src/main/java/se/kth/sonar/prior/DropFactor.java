@@ -34,6 +34,11 @@ public final class DropFactor implements PriorFactor {
   private final ContentCache<Map<RouterId, Integer>> drops = new ContentCache<>(CACHE_CAPACITY);
 
   @Override
+  public String name() {
+    return "drop";
+  }
+
+  @Override
   public double weight(Region region, RepairState state) {
     Map<RouterId, Integer> counts = drops.get(state.verification().digest(), () -> drops(state));
     double weight = 1;

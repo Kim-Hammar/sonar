@@ -11,7 +11,9 @@ import java.util.Set;
 import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.execution.ExecutionContext;
 import se.kth.sonar.grammar.Statement;
+import se.kth.sonar.network.Prefix;
 import se.kth.sonar.network.Snapshot;
+import se.kth.sonar.network.Topology;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.ProgramService;
@@ -79,6 +81,7 @@ public final class Admissibility {
     ProgramModel model = programs.model(delta.after(), base.topology(), Optional.of(base));
     if (!parses(base, model, delta.changed())
         || !violations(model).stream().allMatch(tolerated::contains)
+        || !routesAreWellFounded(base, model, delta.changed())
         || ProgramModel.changedObjects(base, model, delta.changed()).isEmpty()) {
       return Optional.empty();
     }
@@ -126,6 +129,51 @@ public final class Admissibility {
       for (var span : after.dangling()) {
         if (span.router().equals(router)
             && !danglingBefore.contains(after.snapshot().text(router).line(span.first()))) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Returns whether every new interface-only static route has a forwarding endpoint.
+   *
+   * <p>A static route through a physical link can forward an arbitrary remote prefix. An interface
+   * without a topological peer, such as a loopback, can only originate its own connected subnet;
+   * pointing an unrelated prefix at it terminates traffic locally instead of forwarding it. Such a
+   * candidate can make a reachability predicate pass while making a required path impossible, so it
+   * is not a semantically valid repair.
+   */
+  private static boolean routesAreWellFounded(
+      ProgramModel before, ProgramModel after, Set<RouterId> changed) {
+    for (RouterId router : changed) {
+      for (ProgramObject route : after.objectsOf(router)) {
+        if (!route.ref().type().equals("static-route")) {
+          continue;
+        }
+        Optional<ProgramObject> previous = before.object(route.ref());
+        if (previous.isPresent() && previous.get().attributes().equals(route.attributes())) {
+          continue;
+        }
+        Optional<String> interfaceRef = route.value("interface");
+        if (interfaceRef.isEmpty()) {
+          continue;
+        }
+        ProgramObject.Ref ref =
+            ProgramObject.Ref.isReference(interfaceRef.get(), "interface")
+                ? ProgramObject.Ref.parse(interfaceRef.get())
+                : new ProgramObject.Ref("interface", router, List.of(interfaceRef.get()));
+        String interfaceName = ref.key().getFirst();
+        if (after.topology().peer(new Topology.Endpoint(router, interfaceName)).isPresent()) {
+          continue;
+        }
+        Optional<Prefix> routePrefix = route.value("prefix").flatMap(Prefix::tryParse);
+        Optional<Prefix> interfacePrefix =
+            after.object(ref).flatMap(object -> object.value("subnet")).flatMap(Prefix::tryParse);
+        if (routePrefix.isEmpty()
+            || interfacePrefix.isEmpty()
+            || !interfacePrefix.get().contains(routePrefix.get())) {
           return false;
         }
       }

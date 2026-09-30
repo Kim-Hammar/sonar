@@ -1,0 +1,19 @@
+.FlowTrace {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.FlowTrace-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.FlowTrace-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

@@ -48,6 +48,35 @@ public final class VerificationService {
         snapshots, engines.capacity(), snapshot -> verify(snapshot, specifications));
   }
 
+  /**
+   * Verifies each candidate independently, retrying once with a fresh engine and reporting a
+   * deterministic rejection instead of failing the whole batch when Batfish cannot analyse one
+   * candidate. Baselines and adopted states still use {@link #verify} and therefore fail loudly.
+   */
+  public List<Attempt> attemptAll(List<Snapshot> snapshots, SpecificationSet specifications) {
+    return context.fanOut(
+        snapshots, engines.capacity(), snapshot -> attempt(snapshot, specifications));
+  }
+
+  /** The result of attempting to verify one candidate snapshot. */
+  public sealed interface Attempt {
+    /** A candidate Batfish analysed successfully. */
+    record Success(Verification verification) implements Attempt {
+      /** Checks the verification. */
+      public Success {
+        Objects.requireNonNull(verification, "verification");
+      }
+    }
+
+    /** A candidate Batfish rejected on two independent engines. */
+    record Rejected(String reason) implements Attempt {
+      /** Checks the reason. */
+      public Rejected {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
+  }
+
   private static ContentHash key(Snapshot snapshot, SpecificationSet specifications) {
     return ContentHash.builder().add(snapshot.id()).add(specifications.id()).build();
   }
@@ -70,6 +99,29 @@ public final class VerificationService {
       }
       return new Verification(
           snapshot.id(), specifications.judge(observation.holding()), observation.evidence());
+    }
+  }
+
+  /** Retries once and preserves both distinct failures; {@code addSuppressed} rejects itself. */
+  @SuppressWarnings("ReferenceEquality")
+  private Attempt attempt(Snapshot snapshot, SpecificationSet specifications) {
+    try {
+      return new Attempt.Success(verify(snapshot, specifications));
+    } catch (RuntimeException first) {
+      if (Thread.currentThread().isInterrupted()) {
+        throw first;
+      }
+      try {
+        return new Attempt.Success(analyse(snapshot, specifications));
+      } catch (RuntimeException second) {
+        if (second != first) {
+          second.addSuppressed(first);
+        }
+        String message = second.getMessage();
+        return new Attempt.Rejected(
+            second.getClass().getSimpleName()
+                + (message == null || message.isBlank() ? "" : ": " + message));
+      }
     }
   }
 }

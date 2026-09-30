@@ -3,7 +3,6 @@ package se.kth.sonar.web.api;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -87,31 +86,11 @@ public final class ScenarioRoutes {
   }
 
   private String scenario(Call call) {
-    String name = call.parameter("name");
-    if (!repository.contains(name)) {
-      throw HttpError.notFound("no scenario " + name);
-    }
-    return name;
+    return ScenarioRequests.scenario(call, repository);
   }
 
   private int percent(Call call, String name) {
-    List<Integer> available = repository.specificationPercents(name);
-    Optional<String> requested = call.query("percent");
-    if (requested.isEmpty()) {
-      if (available.isEmpty()) {
-        throw HttpError.notFound(name + " has no specifications");
-      }
-      return available.contains(10) ? 10 : available.getFirst();
-    }
-    try {
-      int percent = Integer.parseInt(requested.get());
-      if (!available.contains(percent)) {
-        throw HttpError.notFound(name + " has no specifications for " + percent + "%");
-      }
-      return percent;
-    } catch (NumberFormatException e) {
-      throw HttpError.badRequest("percent must be a whole number");
-    }
+    return ScenarioRequests.percent(call.query("percent"), name, repository);
   }
 
   private ObjectNode topology(String name) {

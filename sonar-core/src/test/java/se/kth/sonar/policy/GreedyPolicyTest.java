@@ -23,6 +23,7 @@ import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.relation.Dialect;
 import se.kth.sonar.report.RepairResult;
+import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.SearchSpace;
 import se.kth.sonar.search.SiteRegion;
@@ -131,8 +132,9 @@ class GreedyPolicyTest {
             new SearchSpace.Capacity(4, 20));
     BeliefState belief = belief(space);
     SearchPolicy.Action first = policy.next(state, space, belief, Budget.unlimited());
-    assertThat(first).isEqualTo(new SearchPolicy.Action.Assess(space.partitions().getFirst().id()));
-    belief = new BeliefModel().afterNeutralAssessment(belief, space.partitions().getFirst());
+    Partition comparison = Partition.comparison(List.of(new Region.Id("a"), new Region.Id("b")));
+    assertThat(first).isEqualTo(new SearchPolicy.Action.Assess(comparison));
+    belief = new BeliefModel().afterNeutralAssessment(belief, comparison);
     assertThat(policy.next(state, space, belief, Budget.unlimited()))
         .isEqualTo(new SearchPolicy.Action.Expand(new Region.Id("a")));
     space = space.replace(region("a", new Region.Hypotheses.Admitted(hypotheses)));

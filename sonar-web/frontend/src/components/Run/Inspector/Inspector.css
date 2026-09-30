@@ -33,17 +33,3 @@
   flex-direction: column;
   gap: 10px;
 }
-
-.Inspector-flow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.Inspector-hop {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}

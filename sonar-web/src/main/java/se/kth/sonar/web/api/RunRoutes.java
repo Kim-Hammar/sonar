@@ -140,7 +140,7 @@ public final class RunRoutes {
   private static String id(Call call) {
     String id = call.parameter("id");
     if (!RunStore.validId(id)) {
-      throw HttpError.notFound("no run " + id);
+      throw HttpError.notFound("no agent execution " + id);
     }
     return id;
   }
@@ -150,7 +150,7 @@ public final class RunRoutes {
   }
 
   private static HttpError missing(Call call) {
-    return HttpError.notFound("no run " + call.parameter("id"));
+    return HttpError.notFound("no agent execution " + call.parameter("id"));
   }
 
   private static long number(String text, String name) {

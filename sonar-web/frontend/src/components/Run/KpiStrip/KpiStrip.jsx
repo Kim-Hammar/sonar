@@ -1,7 +1,6 @@
 import { formatCompact, formatDuration, formatNumber } from '../../Common/format'
-import Hint from '../../Common/Hint/Hint'
 import { HINTS } from '../../Common/hints'
-import './KpiStrip.css'
+import Tiles from '../../Common/Tiles/Tiles'
 
 /** The headline numbers of a run, one tile each. */
 export default function KpiStrip({ run, state, now }) {
@@ -44,17 +43,5 @@ export default function KpiStrip({ run, state, now }) {
     },
     { label: 'Elapsed', hint: HINTS.kpi.elapsed, value: formatDuration(elapsed) }
   ]
-  return (
-    <div className="KpiStrip">
-      {tiles.map((tile) => (
-        <div key={tile.label} className="KpiStrip-tile card">
-          <div className="KpiStrip-label">
-            <Hint {...tile.hint}>{tile.label}</Hint>
-          </div>
-          <div className="KpiStrip-value">{tile.value}</div>
-          {tile.detail && <div className="KpiStrip-detail">{tile.detail}</div>}
-        </div>
-      ))}
-    </div>
-  )
+  return <Tiles tiles={tiles} />
 }

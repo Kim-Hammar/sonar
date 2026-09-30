@@ -1,0 +1,72 @@
+.SearchPanel-explanation {
+  margin-bottom: 12px;
+}
+
+.SearchPanel-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+}
+
+.SearchPanel-start p {
+  margin: 0;
+}
+
+.SearchPanel-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.SearchPanel-summary {
+  margin-bottom: 16px;
+}
+
+.SearchPanel-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.SearchPanel-filters .FieldLabel {
+  margin-left: 8px;
+}
+
+.SearchPanel-filters .FieldLabel:first-child {
+  margin-left: 0;
+}
+
+.SearchPanel-count {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.SearchPanel .DataTable-frame {
+  max-height: 560px;
+}
+
+.SearchPanel .DataTable th,
+.SearchPanel .DataTable td {
+  padding: 6px;
+  font-size: 12px;
+}
+
+.SearchPanel-region {
+  display: inline-block;
+  min-width: 200px;
+  max-width: 240px;
+  word-break: break-all;
+}
+
+.SearchPanel-routers {
+  display: inline-block;
+  max-width: 170px;
+  overflow-wrap: anywhere;
+}

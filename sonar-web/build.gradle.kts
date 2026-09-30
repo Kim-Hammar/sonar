@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api(project(":sonar-app"))
+    implementation(project(":sonar-batfish"))
     implementation(platform(libs.jackson.bom))
     implementation(libs.jackson.databind)
     testImplementation(testFixtures(project(":sonar-app")))

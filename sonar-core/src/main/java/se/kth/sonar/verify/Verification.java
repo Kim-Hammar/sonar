@@ -21,7 +21,7 @@ public record Verification(ContentHash snapshot, Verdict verdict, DataPlaneEvide
     Objects.requireNonNull(evidence, "evidence");
   }
 
-  /** Returns a digest of the snapshot and the verdict, for caching what depends on both. */
+  /** Returns a digest of the snapshot, verdict, and evidence for dependent analysis caches. */
   public ContentHash digest() {
     ContentHash.Builder digest = ContentHash.builder().add(snapshot);
     for (List<Specification> group :
@@ -29,6 +29,7 @@ public record Verification(ContentHash snapshot, Verdict verdict, DataPlaneEvide
       digest.add(group.size());
       group.forEach(specification -> digest.add(specification.predicate().key()));
     }
+    digest.add(evidence.digest());
     return digest.build();
   }
 }

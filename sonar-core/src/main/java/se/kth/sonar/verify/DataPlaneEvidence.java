@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
+import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.network.Prefix;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.text.RouterId;
@@ -31,6 +33,34 @@ public record DataPlaneEvidence(
   /** Returns evidence without facts. */
   public static DataPlaneEvidence none() {
     return new DataPlaneEvidence(Map.of(), Map.of(), Map.of());
+  }
+
+  /** Returns a deterministic digest of every trace, route holder, and forwarder. */
+  public ContentHash digest() {
+    ContentHash.Builder digest = ContentHash.builder().add("traces").add(traces.size());
+    traces.entrySet().stream()
+        .sorted(Map.Entry.comparingByKey(java.util.Comparator.comparing(ForwardingPredicate::key)))
+        .forEach(
+            entry -> {
+              digest.add(entry.getKey().key()).add(entry.getValue().size());
+              for (Trace trace : entry.getValue()) {
+                digest.add(trace.disposition().name()).add(trace.hops().size());
+                trace.hops().forEach(router -> digest.add(router.name()));
+              }
+            });
+    addMembership(digest, "route-holders", routeHolders);
+    addMembership(digest, "forwarders", forwarders);
+    return digest.build();
+  }
+
+  private static void addMembership(
+      ContentHash.Builder digest, String label, Map<Prefix, Set<RouterId>> membership) {
+    digest.add(label).add(membership.size());
+    for (Prefix prefix : new TreeSet<>(membership.keySet())) {
+      TreeSet<RouterId> routers = new TreeSet<>(membership.get(prefix));
+      digest.add(prefix.toString()).add(routers.size());
+      routers.forEach(router -> digest.add(router.name()));
+    }
   }
 
   /** The fate of a traced flow. */

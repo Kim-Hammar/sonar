@@ -26,8 +26,13 @@ public record Workspace(Path dataset, Path output) {
     return output.resolve("decision-cache");
   }
 
-  /** Returns the private storage directory of data-plane engine {@code index}. */
+  /** Returns the private storage directory of data-plane engine {@code index} of a run. */
   public Path engineStorage(int index) {
-    return output.resolve("batfish").resolve(Integer.toString(index));
+    return engineStorage(Integer.toString(index));
+  }
+
+  /** Returns the private storage directory of the data-plane engine called {@code name}. */
+  public Path engineStorage(String name) {
+    return output.resolve("batfish").resolve(name);
   }
 }

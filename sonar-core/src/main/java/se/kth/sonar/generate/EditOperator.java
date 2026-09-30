@@ -220,6 +220,69 @@ public sealed interface EditOperator {
     }
   }
 
+  /**
+   * Inserts several grammar-checked statements as one atomic program object.
+   *
+   * <p>This is the block counterpart of {@link InsertStatement}: every line is rendered by a
+   * production, while one line edit preserves their nesting and order. It is used when a missing
+   * definition and its dependent uses are one relation and cannot become valid one statement at a
+   * time.
+   *
+   * @param router the router
+   * @param after the line after which to insert
+   * @param statements the statements in configuration order
+   * @param provenance why the block is required
+   */
+  record InsertBlock(
+      RouterId router, int after, List<RenderedStatement> statements, Provenance provenance)
+      implements EditOperator {
+    /** Checks the components and renders every production once. */
+    public InsertBlock {
+      Objects.requireNonNull(router, "router");
+      statements = List.copyOf(statements);
+      Objects.requireNonNull(provenance, "provenance");
+      if (after < 0 || statements.isEmpty()) {
+        throw new IllegalArgumentException("a block has a position and at least one statement");
+      }
+      statements.forEach(RenderedStatement::text);
+    }
+
+    @Override
+    public LineEdit lower() {
+      return new LineEdit.InsertAfter(
+          router, after, statements.stream().map(RenderedStatement::text).toList());
+    }
+
+    @Override
+    public String shape() {
+      return "insert block "
+          + String.join(",", statements.stream().map(s -> s.production().id()).toList());
+    }
+  }
+
+  /**
+   * One grammar-rendered line of an inserted block.
+   *
+   * @param indentation the whitespace before the statement
+   * @param production the statement production
+   * @param values every slot value
+   */
+  record RenderedStatement(
+      String indentation, Production production, Map<String, List<String>> values) {
+    /** Checks that the values render under the production. */
+    public RenderedStatement {
+      Objects.requireNonNull(indentation, "indentation");
+      Objects.requireNonNull(production, "production");
+      values = frozen(values);
+      production.render(values);
+    }
+
+    /** Returns the indented configuration line. */
+    public String text() {
+      return indentation + production.render(values);
+    }
+  }
+
   private static Map<String, List<String>> frozen(Map<String, List<String>> values) {
     SequencedMap<String, List<String>> copy = new LinkedHashMap<>();
     values.forEach((slot, tokens) -> copy.put(slot, List.copyOf(tokens)));

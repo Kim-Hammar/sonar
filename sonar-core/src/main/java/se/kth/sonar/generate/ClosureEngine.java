@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import se.kth.sonar.grammar.Grammar;
 import se.kth.sonar.grammar.Production;
 import se.kth.sonar.grammar.Statement;
 import se.kth.sonar.program.ProgramModel;
@@ -42,7 +43,7 @@ import se.kth.sonar.verify.Verification;
  */
 public final class ClosureEngine {
   private static final int MAX_ALTERNATIVES = 8;
-  private static final int MAX_COMPLETIONS = 4;
+  private static final int MAX_COMPLETIONS = 8;
 
   private final ProgramService programs;
   private final RelationSchema schema;
@@ -215,7 +216,7 @@ public final class ClosureEngine {
       if (requirement.guard().isPresent() && !requirement.guard().get().attributes().isEmpty()) {
         alternatives.addAll(completer.unset(requirement.guard().get()));
       }
-      alternatives.addAll(
+      List<List<EditOperator>> direct =
           switch (requirement.constraint()) {
             case Constraint.Exists exists ->
                 exists.path().attributes().isEmpty()
@@ -226,7 +227,13 @@ public final class ClosureEngine {
             case Constraint.Agree agree -> completer.align(agree.left(), agree.right(), true);
             case Constraint.Resolves resolves -> completer.resolve(resolves.path());
             case Constraint.Distinct distinct -> completer.distinguish(distinct.path());
-          });
+          };
+      alternatives.addAll(direct);
+      if (direct.isEmpty()
+          && requirement.constraint() instanceof Constraint.Exists exists
+          && exists.path().attributes().isEmpty()) {
+        alternatives.addAll(completer.structuralPrerequisites(exists.path().role()));
+      }
     }
     return alternatives.size() > MAX_COMPLETIONS
         ? alternatives.subList(0, MAX_COMPLETIONS)
@@ -339,6 +346,9 @@ public final class ClosureEngine {
     /** Returns the values a derived attribute of {@code holder} could be given, likeliest first. */
     private List<String> targets(ProgramObject holder, Attribute attribute) {
       List<String> targets = new ArrayList<>();
+      if (attribute.type() instanceof Attribute.Type.Flag) {
+        return List.of("true");
+      }
       if (attribute.type() instanceof Attribute.Type.Reference reference) {
         List<ProgramObject> candidates = new ArrayList<>();
         for (ProgramObject object : program.objectsOf(holder.ref().router())) {
@@ -468,6 +478,89 @@ public final class ClosureEngine {
         }
       }
       return alternatives;
+    }
+
+    /**
+     * Opens a missing syntactic context needed to create {@code roleName}. This is the generic
+     * prerequisite of creating an object whose defining statements live in a parameterised block:
+     * for example, a BGP-neighbor role cannot be created until its router has a BGP process. The
+     * values of the opener still come from the ordinary typed domains, and closure then retries the
+     * original relation obligation.
+     */
+    List<List<EditOperator>> structuralPrerequisites(String roleName) {
+      Optional<RouterId> placement = roleRouter(roleName);
+      if (placement.isEmpty()) {
+        return List.of();
+      }
+      ObjectType role = schema.object(relation.role(roleName).orElseThrow().object()).orElseThrow();
+      Set<Grammar.Context> needed = new HashSet<>();
+      for (Production source : role.sources()) {
+        Grammar.Context context = source.context();
+        while (!context.isRoot()) {
+          needed.add(context);
+          context = schema.grammar().context(context.parent().orElseThrow()).orElseThrow();
+        }
+      }
+      ProgramObject.Ref routerRef =
+          new ProgramObject.Ref(ObjectType.ROUTER, placement.get(), List.of());
+      Optional<ProgramObject> router = program.object(routerRef);
+      if (router.isEmpty()) {
+        return List.of();
+      }
+      List<List<EditOperator>> prerequisites = new ArrayList<>();
+      ObjectType routerType = schema.object(ObjectType.ROUTER).orElseThrow();
+      for (Attribute attribute : routerType.attributes().values()) {
+        if (!(attribute.source() instanceof Attribute.Source.Slots slots)) {
+          continue;
+        }
+        List<Production> openers =
+            slots.slots().stream()
+                .map(Attribute.SlotRef::production)
+                .filter(production -> production.opens().filter(needed::contains).isPresent())
+                .toList();
+        if (openers.isEmpty()) {
+          continue;
+        }
+        prerequisites.addAll(insertFor(router.get(), openers, Map.of(), slots.where()));
+        if (prerequisites.size() >= MAX_COMPLETIONS) {
+          return prerequisites.subList(0, MAX_COMPLETIONS);
+        }
+      }
+      return prerequisites;
+    }
+
+    /** Returns the router on which an unfilled role must be placed, from its owner join. */
+    private Optional<RouterId> roleRouter(String roleName) {
+      ObjectType type = schema.object(relation.role(roleName).orElseThrow().object()).orElseThrow();
+      for (RelationType.Join join : relation.joins()) {
+        AttributePath own;
+        AttributePath other;
+        if (join.left().role().equals(roleName)) {
+          own = join.left();
+          other = join.right();
+        } else if (join.right().role().equals(roleName)) {
+          own = join.right();
+          other = join.left();
+        } else {
+          continue;
+        }
+        if (own.attributes().size() != 1) {
+          continue;
+        }
+        Attribute attribute = type.attribute(own.attributes().getFirst()).orElse(null);
+        if (attribute == null || !(attribute.source() instanceof Attribute.Source.Owner)) {
+          continue;
+        }
+        Optional<List<String>> value = valueAt(other);
+        if (value.isPresent() && value.get().size() == 1) {
+          try {
+            return Optional.of(ProgramObject.Ref.parse(value.get().getFirst()).router());
+          } catch (IllegalArgumentException malformed) {
+            return Optional.empty();
+          }
+        }
+      }
+      return Optional.empty();
     }
 
     private RouterId routerOr(RouterId router, RelationInstance instance) {

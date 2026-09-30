@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.within;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.ToDoubleBiFunction;
 import org.junit.jupiter.api.Test;
 import se.kth.sonar.common.Distribution;
 import se.kth.sonar.network.Prefix;
@@ -74,14 +75,45 @@ class RegionPriorTest {
     return SearchSpace.partitioned(regions, new SearchSpace.Capacity(10, 100));
   }
 
+  private static PriorFactor factor(String name, ToDoubleBiFunction<Region, RepairState> weight) {
+    return new PriorFactor() {
+      @Override
+      public String name() {
+        return name;
+      }
+
+      @Override
+      public double weight(Region region, RepairState state) {
+        return weight.applyAsDouble(region, state);
+      }
+    };
+  }
+
   @Test
   void multipliesFactorsAndNormalises() {
-    PriorFactor favoursA = (region, state) -> region.id().value().equals("a") ? 2 : 1;
-    PriorFactor constant = (region, state) -> 3;
+    PriorFactor favoursA =
+        factor("favours-a", (region, state) -> region.id().value().equals("a") ? 2 : 1);
+    PriorFactor constant = factor("constant", (region, state) -> 3);
     Distribution<Region.Id> prior =
         new RegionPrior(List.of(favoursA, constant)).over(space("a", "b"), state());
     assertThat(prior.probability(new Region.Id("a"))).isCloseTo(2.0 / 3, within(1e-12));
     assertThat(prior.probability(new Region.Id("b"))).isCloseTo(1.0 / 3, within(1e-12));
+  }
+
+  @Test
+  void breaksTheWeightDownByFactor() {
+    RegionPrior prior =
+        new RegionPrior(
+            List.of(
+                factor("favours-a", (region, state) -> region.id().value().equals("a") ? 2 : 1),
+                factor("constant", (region, state) -> 3)));
+    Region a = space("a", "b").region(new Region.Id("a")).orElseThrow();
+    assertThat(prior.breakdown(a, state()))
+        .containsExactly(Map.entry("favours-a", 2.0), Map.entry("constant", 3.0));
+    assertThat(prior.weight(a, state())).isEqualTo(6);
+    assertThat(prior.factors())
+        .extracting(PriorFactor::name)
+        .containsExactly("favours-a", "constant");
   }
 
   @Test
@@ -95,9 +127,14 @@ class RegionPriorTest {
   void rejectsInvalidFactorWeights() {
     RepairState state = state();
     SearchSpace space = space("a");
-    assertThatThrownBy(() -> new RegionPrior(List.of((region, s) -> -1)).over(space, state))
-        .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> new RegionPrior(List.of((region, s) -> Double.NaN)).over(space, state))
+    assertThatThrownBy(
+            () -> new RegionPrior(List.of(factor("negative", (r, s) -> -1))).over(space, state))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("negative");
+    assertThatThrownBy(
+            () ->
+                new RegionPrior(List.of(factor("undefined", (r, s) -> Double.NaN)))
+                    .over(space, state))
         .isInstanceOf(IllegalStateException.class);
   }
 

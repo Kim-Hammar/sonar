@@ -34,12 +34,16 @@ class VerdictTest {
   }
 
   @Test
-  void improvingNeedsAStrictSubsetWithoutSideEffects() {
+  void improvingUsesStrictFormalLossAndNeverAddsAnIntactRegression() {
     Verdict before = verdict(List.of(A, B), List.of());
     assertThat(verdict(List.of(A), List.of()).improvesOn(before)).isTrue();
     assertThat(verdict(List.of(A), List.of(INTACT)).improvesOn(before)).isFalse();
     assertThat(verdict(List.of(A, B), List.of()).improvesOn(before)).isFalse();
-    assertThat(verdict(List.of(C), List.of()).improvesOn(before)).isFalse();
+    assertThat(verdict(List.of(C), List.of()).improvesOn(before)).isTrue();
+
+    Verdict withExistingRegression = verdict(List.of(A, B), List.of(INTACT));
+    assertThat(verdict(List.of(A), List.of(INTACT)).improvesOn(withExistingRegression)).isTrue();
+    assertThat(verdict(List.of(A), List.of()).improvesOn(withExistingRegression)).isTrue();
   }
 
   @Test

@@ -64,7 +64,7 @@ public final class RunManager implements AutoCloseable {
     lock.lock();
     try {
       if (closed) {
-        throw new IllegalStateException("the run manager is closed");
+        throw new IllegalStateException("the server is shutting down");
       }
       RunLog log = store.create(name, scenarios, settings, demo, model);
       RunDocument document = log.document();
@@ -133,7 +133,7 @@ public final class RunManager implements AutoCloseable {
         return Optional.empty();
       }
       if (current(id).runStatus().terminal()) {
-        throw new IllegalStateException("the run has already ended");
+        throw new IllegalStateException("the execution has already ended");
       }
       Cancellation cancellation = cancellations.get(id);
       cancellation.cancel();
@@ -209,7 +209,7 @@ public final class RunManager implements AutoCloseable {
       launcher.launch(log.document(), cancellation, log);
       if (log.failure().isPresent()) {
         status = RunStatus.FAILED;
-        error = "the run log could not be written: " + log.failure().get().getMessage();
+        error = "the execution log could not be written: " + log.failure().get().getMessage();
       }
     } catch (RuntimeException failure) {
       status = RunStatus.FAILED;

@@ -29,9 +29,9 @@ const FILTERS_WITHOUT_STATE = [
 
 /**
  * Specifications with filters: by state when a run has verified them, otherwise by their status
- * in the faulty network.
+ * in the faulty network. With `onSelect`, a row can be selected and the `selected` key is marked.
  */
-export default function SpecificationTable({ rows, statuses = null }) {
+export default function SpecificationTable({ rows, statuses = null, onSelect, selected }) {
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(PAGE)
@@ -121,6 +121,8 @@ export default function SpecificationTable({ rows, statuses = null }) {
         columns={columns}
         rows={shown.slice(0, limit)}
         rowKey={(row) => row.key}
+        onRowClick={onSelect && ((row) => onSelect(row.key))}
+        selected={selected}
         empty="No specification matches"
       />
       {shown.length > limit && (

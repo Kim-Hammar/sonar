@@ -15,7 +15,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.batfish.common.BatfishLogger;
 import org.batfish.common.NetworkSnapshot;
@@ -46,7 +45,7 @@ import se.kth.sonar.verify.DataPlaneEngine;
  * deleted. An engine holds one Batfish instance and serves one thread at a time. Engines in one
  * process use distinct network and snapshot names, because Batfish keeps some state per name.
  */
-public final class BatfishEngine implements DataPlaneEngine {
+public final class BatfishEngine implements DataPlaneEngine, DataPlaneInspector {
   private static final AtomicLong ENGINES = new AtomicLong();
 
   private final Settings settings;
@@ -76,12 +75,15 @@ public final class BatfishEngine implements DataPlaneEngine {
 
   @Override
   public Observation analyze(Snapshot snapshot, SpecificationSet specifications) {
-    return analyze(snapshot, specifications, rows -> {});
+    return analyze(snapshot, specifications, false).observation();
   }
 
-  /** Analyses {@code snapshot} and also hands the forwarding rows to {@code inspector}. */
-  Observation analyze(
-      Snapshot snapshot, SpecificationSet specifications, Consumer<List<ForwardingRow>> inspector) {
+  @Override
+  public Report inspect(Snapshot snapshot, SpecificationSet specifications) {
+    return analyze(snapshot, specifications, true);
+  }
+
+  private Report analyze(Snapshot snapshot, SpecificationSet specifications, boolean keepRows) {
     Batfish instance = instance();
     analyses++;
     SnapshotId id = new SnapshotId(networkName + "-s" + analyses);
@@ -100,9 +102,10 @@ public final class BatfishEngine implements DataPlaneEngine {
       List<ForwardingRow> rows =
           ForwardingTable.rows(
               dataPlane, configurations, instance.getTopologyProvider().getLayer3Topology(target));
-      inspector.accept(rows);
-      return PredicateMiner.observe(
-          rows, owners(configurations), holders(dataPlane), specifications);
+      Observation observation =
+          PredicateMiner.observe(rows, owners(configurations), holders(dataPlane), specifications);
+      return new Report(
+          observation, keepRows ? rows.stream().map(ForwardingEntry::of).toList() : List.of());
     } catch (IOException e) {
       throw new UncheckedIOException("cannot write snapshot " + id + " to Batfish storage", e);
     } finally {

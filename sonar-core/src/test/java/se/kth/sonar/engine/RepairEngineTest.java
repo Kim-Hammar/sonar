@@ -127,7 +127,7 @@ class RepairEngineTest {
   private static final AtomicInteger analyses = new AtomicInteger();
 
   /** Judges the two specifications from r2's text alone. */
-  private static final class ScriptedDataPlane implements DataPlaneEngine {
+  static final class ScriptedDataPlane implements DataPlaneEngine {
     @Override
     public Observation analyze(Snapshot snapshot, SpecificationSet specifications) {
       analyses.incrementAndGet();
@@ -193,7 +193,7 @@ class RepairEngineTest {
     context.close();
   }
 
-  private static RepairProblem problem() {
+  static RepairProblem problem() {
     Snapshot snapshot = Snapshot.of(Map.of("1_as65001_r1.cfg", R1, "2_as65001_r2.cfg", R2));
     Topology topology =
         Topology.of(
@@ -221,16 +221,16 @@ class RepairEngineTest {
             bounds,
             context);
     ResourcePool<DecisionModel> models = ResourcePool.of(1, IndifferentModel::new, model -> {});
+    RegionPrior prior =
+        new RegionPrior(
+            List.of(
+                new SpectrumFactor(),
+                new RelationFactor(programs.evaluator()),
+                new FrontierFactor()));
     return new RepairEngine(
         new RepairEngine.Components(
-            programs,
+            new EpochBuilder(programs, spaces, prior),
             verifier,
-            spaces,
-            new RegionPrior(
-                List.of(
-                    new SpectrumFactor(),
-                    new RelationFactor(programs.evaluator()),
-                    new FrontierFactor())),
             new DecisionProblemFactory(60_000),
             new DecisionService(models, context),
             new BeliefModel(),

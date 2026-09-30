@@ -95,9 +95,9 @@ public final class BeliefModel {
         belief.epoch());
   }
 
-  private static Set<Partition.Id> assessedWith(BeliefState belief, Partition partition) {
-    Set<Partition.Id> assessed = new LinkedHashSet<>(belief.assessed());
-    assessed.add(partition.id());
+  private static Set<Region.Id> assessedWith(BeliefState belief, Partition partition) {
+    Set<Region.Id> assessed = new LinkedHashSet<>(belief.assessed());
+    assessed.addAll(partition.regions());
     return assessed;
   }
 }

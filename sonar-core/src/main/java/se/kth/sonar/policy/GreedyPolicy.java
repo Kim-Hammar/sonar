@@ -1,6 +1,7 @@
 package se.kth.sonar.policy;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import se.kth.sonar.belief.BeliefState;
 import se.kth.sonar.common.ContentHash;
@@ -23,6 +24,7 @@ import se.kth.sonar.state.RepairState;
  */
 public final class GreedyPolicy implements SearchPolicy {
   private static final int DEFAULT_BATCH = 5;
+  private static final int COMPARISON_REGIONS = 16;
 
   private final int batch;
 
@@ -56,10 +58,20 @@ public final class GreedyPolicy implements SearchPolicy {
     Distribution<Region.Id> posterior = belief.posterior();
     Region.Id best = posterior.argmax();
     Region region = space.region(best).orElseThrow();
-    Partition partition = space.partitionOf(best);
     boolean canDecide = !budget.exhausted(Budget.Resource.DECISIONS);
-    if (partition.regions().size() > 1 && !belief.isAssessed(partition.id()) && canDecide) {
-      return new Action.Assess(partition.id());
+    if (!belief.isAssessed(best) && canDecide) {
+      List<Region.Id> competitors =
+          posterior.outcomes().stream()
+              .filter(id -> !belief.isAssessed(id))
+              .sorted(
+                  Comparator.<Region.Id>comparingDouble(posterior::probability)
+                      .reversed()
+                      .thenComparing(Region.Id::value))
+              .limit(COMPARISON_REGIONS)
+              .toList();
+      if (competitors.size() > 1) {
+        return new Action.Assess(Partition.comparison(competitors));
+      }
     }
     if (!(region.hypotheses() instanceof Region.Hypotheses.Admitted admitted)) {
       return new Action.Expand(best);

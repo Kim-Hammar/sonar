@@ -96,6 +96,45 @@ public final class SeedGenerator {
     return seeds;
   }
 
+  /**
+   * Returns the typed operators that insert one fully specified statement near {@code template}.
+   *
+   * <p>The template supplies only the syntactic block and insertion position. The production and
+   * values define the new object, so this also materialises an inferred relation member that does
+   * not exist yet.
+   */
+  public List<EditOperator> insert(
+      ProgramModel program,
+      ProgramObject.Ref template,
+      String productionId,
+      Map<String, List<String>> values,
+      Provenance provenance) {
+    ProgramObject object = program.object(template).orElse(null);
+    if (object == null) {
+      return List.of();
+    }
+    Production production = grammar.production(productionId).orElseThrow();
+    Layout layout = new Layout(program.statements(template.router()));
+    ObjectType type = schema.object(template.type()).orElseThrow();
+    List<Statement> bound =
+        object.statements().stream().map(span -> layout.at(span.first()).orElseThrow()).toList();
+    Optional<Anchor> anchor = anchor(layout, type, bound, production.context());
+    if (anchor.isEmpty()) {
+      return List.of();
+    }
+    List<EditOperator> operators = new ArrayList<>(anchor.get().openers());
+    operators.add(
+        new EditOperator.InsertStatement(
+            template.router(),
+            anchor.get().after(),
+            anchor.get().indentation(),
+            production,
+            values,
+            provenance));
+    operators.addAll(anchor.get().closers());
+    return List.copyOf(operators);
+  }
+
   private List<List<EditOperator>> edits(
       ProgramModel program,
       Verification verification,

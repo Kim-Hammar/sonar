@@ -100,12 +100,12 @@ describe('NewRunPage', () => {
         </MemoryRouter>
       </InfoContext.Provider>
     )
-    await user.click(screen.getByRole('button', { name: 'Start run' }))
+    await user.click(screen.getByRole('button', { name: 'Start agent execution' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Choose at least one scenario.')
     await user.click(await screen.findByRole('checkbox', { name: 'scenario-002' }))
     await user.type(screen.getByLabelText('Verifications per scenario'), '30')
     expect(screen.queryByLabelText('Seed')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Start run' }))
+    await user.click(screen.getByRole('button', { name: 'Start agent execution' }))
     await waitFor(() => expect(api.createRun).toHaveBeenCalledTimes(1))
     const body = api.createRun.mock.calls[0][0]
     expect(body.scenarios).toEqual(['scenario-002'])

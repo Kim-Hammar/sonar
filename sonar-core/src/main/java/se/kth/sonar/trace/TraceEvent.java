@@ -96,6 +96,22 @@ public sealed interface TraceEvent {
   }
 
   /**
+   * Batfish could not analyse a candidate even after retrying it on a fresh engine.
+   *
+   * @param region the region the candidate belongs to
+   * @param hypothesis the rejected candidate
+   * @param reason the verifier failure
+   */
+  record Rejected(Region.Id region, Hypothesis hypothesis, String reason) implements TraceEvent {
+    /** Checks the components. */
+    public Rejected {
+      Objects.requireNonNull(region, "region");
+      Objects.requireNonNull(hypothesis, "hypothesis");
+      Objects.requireNonNull(reason, "reason");
+    }
+  }
+
+  /**
    * Candidates were adopted.
    *
    * @param epoch the new state

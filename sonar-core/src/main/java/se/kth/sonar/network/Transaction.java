@@ -3,6 +3,7 @@ package se.kth.sonar.network;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -107,6 +108,7 @@ public final class Transaction {
       ConfigText after = adopted.after().text(router);
       List<LineEdit> together = new ArrayList<>(LineDiff.between(router, before, after));
       together.addAll(entry.getValue());
+      together = new ArrayList<>(new LinkedHashSet<>(together));
       ConfigText merged;
       try {
         merged = before.apply(together);

@@ -5,7 +5,7 @@ import Empty from '../Common/Empty/Empty'
 export default function NotFound() {
   return (
     <div className="page">
-      <Empty title="Page not found" action={<Link to="/runs">Go to runs</Link>}>
+      <Empty title="Page not found" action={<Link to="/executions">Go to agent executions</Link>}>
         The address does not match any page.
       </Empty>
     </div>

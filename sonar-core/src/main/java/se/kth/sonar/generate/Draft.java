@@ -115,7 +115,7 @@ public final class Draft {
    * the base program.
    */
   public Set<ProgramObject.Ref> touched() {
-    return ProgramModel.changedObjects(base, program, routers());
+    return ProgramModel.changedObjects(base, program, base.snapshot().routers());
   }
 
   /** Returns the hypothesis the operators make against the base snapshot. */

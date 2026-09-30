@@ -13,6 +13,7 @@ import se.kth.sonar.decision.DecisionProblemFactory;
 import se.kth.sonar.decision.DecisionService;
 import se.kth.sonar.engine.Adoption;
 import se.kth.sonar.engine.BenchmarkRunner;
+import se.kth.sonar.engine.EpochBuilder;
 import se.kth.sonar.engine.RepairEngine;
 import se.kth.sonar.engine.Repairer;
 import se.kth.sonar.execution.Cancellation;
@@ -29,8 +30,10 @@ import se.kth.sonar.jev.HttpTransport;
 import se.kth.sonar.jev.JevDecisionModel;
 import se.kth.sonar.jev.JevRequestCodec;
 import se.kth.sonar.policy.GreedyPolicy;
+import se.kth.sonar.prior.CounterexampleFactor;
 import se.kth.sonar.prior.DropFactor;
 import se.kth.sonar.prior.FrontierFactor;
+import se.kth.sonar.prior.PolicyCutFactor;
 import se.kth.sonar.prior.RegionPrior;
 import se.kth.sonar.prior.RelationFactor;
 import se.kth.sonar.prior.SpectrumFactor;
@@ -165,9 +168,14 @@ public final class Pipeline implements AutoCloseable {
     }
   }
 
-  private RepairEngine.Components components(Dialect dialect) {
+  /**
+   * Returns the epoch builder of {@code dialect} on {@code context}: the program service, the
+   * search space builder with the generation bounds and partition capacity of a run, and the prior
+   * with its factors in order. It is what a run searches with, and what inspects a scenario's
+   * search space without a run.
+   */
+  public static EpochBuilder epochs(Dialect dialect, ExecutionContext context) {
     ProgramService programs = new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
-    VerificationService verifier = new VerificationService(engines, context);
     Bounds bounds = Bounds.defaults();
     SeedGenerator seeds =
         new SeedGenerator(dialect.schema(), new ValueDomains(dialect.schema(), bounds), bounds);
@@ -179,16 +187,23 @@ public final class Pipeline implements AutoCloseable {
             new SearchSpace.Capacity(PARTITION_REGIONS, PARTITION_HYPOTHESES),
             bounds,
             context);
-    return new RepairEngine.Components(
-        programs,
-        verifier,
-        spaces,
+    RegionPrior prior =
         new RegionPrior(
             List.of(
                 new SpectrumFactor(),
                 new RelationFactor(programs.evaluator()),
+                new CounterexampleFactor(),
+                new PolicyCutFactor(),
                 new FrontierFactor(),
-                new DropFactor())),
+                new DropFactor()));
+    return new EpochBuilder(programs, spaces, prior);
+  }
+
+  private RepairEngine.Components components(Dialect dialect) {
+    VerificationService verifier = new VerificationService(engines, context);
+    return new RepairEngine.Components(
+        epochs(dialect, context),
+        verifier,
         new DecisionProblemFactory(PAYLOAD_LIMIT),
         new DecisionService(models, context),
         new BeliefModel(),

@@ -126,10 +126,16 @@ public final class SonarCli implements Runnable {
         description = "Decision endpoint (default: ${DEFAULT-VALUE}).")
     private URI endpoint = HttpTransport.Settings.openRouter().endpoint();
 
+    @Option(
+        names = "--api-key-variable",
+        paramLabel = "NAME",
+        description =
+            "Environment variable containing the endpoint API key (default: ${DEFAULT-VALUE}).")
+    private String apiKeyVariable = HttpTransport.Settings.openRouter().apiKeyVariable();
+
     HttpTransport.Settings settings() {
       HttpTransport.Settings defaults = HttpTransport.Settings.openRouter();
-      return new HttpTransport.Settings(
-          endpoint, model, defaults.apiKeyVariable(), defaults.timeout());
+      return new HttpTransport.Settings(endpoint, model, apiKeyVariable, defaults.timeout());
     }
   }
 

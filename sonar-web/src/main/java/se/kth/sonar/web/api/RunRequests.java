@@ -47,7 +47,7 @@ final class RunRequests {
       }
     }
     if (request.settings() == null) {
-      throw HttpError.badRequest("the run settings are missing");
+      throw HttpError.badRequest("the execution settings are missing");
     }
     RunDocument.Settings settings = request.settings();
     within("verificationWorkers", settings.verificationWorkers());

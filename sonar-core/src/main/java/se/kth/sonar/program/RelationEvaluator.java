@@ -322,6 +322,7 @@ public final class RelationEvaluator {
         if (value.isEmpty()) {
           return false;
         }
+        index.observeReferences(value.get(), schema);
         if (candidates == null) {
           candidates = new ArrayList<>(matching(role, own, value.get(), roles, index));
         } else {
@@ -527,6 +528,27 @@ public final class RelationEvaluator {
                   type, router, type.equals(ObjectType.ROUTER) ? List.of() : List.of(text));
       reads.add(ref);
       return Optional.ofNullable(objects.get(ref));
+    }
+
+    /**
+     * Records typed object references used to constrain an optional role, even when it is absent.
+     */
+    void observeReferences(List<String> values, RelationSchema schema) {
+      for (String value : values) {
+        int separator = value.indexOf(':');
+        if (separator <= 0 || schema.object(value.substring(0, separator)).isEmpty()) {
+          continue;
+        }
+        parseReference(value).ifPresent(reads::add);
+      }
+    }
+
+    private Optional<ProgramObject.Ref> parseReference(String value) {
+      try {
+        return Optional.of(ProgramObject.Ref.parse(value));
+      } catch (IllegalArgumentException notAReference) {
+        return Optional.empty();
+      }
     }
 
     /** Returns the objects resolved since the last call, and forgets them. */

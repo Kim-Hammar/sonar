@@ -1,7 +1,10 @@
 package se.kth.sonar.state;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -9,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import se.kth.sonar.network.Prefix;
+import se.kth.sonar.network.Topology;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.spec.ForwardingPredicate;
@@ -38,6 +42,76 @@ public final class RouterEvidence {
   /** Returns the routers that originate {@code prefix}. */
   public Set<RouterId> owners(Prefix prefix) {
     return owners.getOrDefault(prefix, Set.of());
+  }
+
+  /** An unordered physical router relation. */
+  public record Link(RouterId first, RouterId second) implements Comparable<Link> {
+    /** Returns the link in canonical router order. */
+    public static Link of(RouterId left, RouterId right) {
+      return left.compareTo(right) <= 0 ? new Link(left, right) : new Link(right, left);
+    }
+
+    @Override
+    public int compareTo(Link other) {
+      int firstOrder = first.compareTo(other.first);
+      return firstOrder != 0 ? firstOrder : second.compareTo(other.second);
+    }
+  }
+
+  /**
+   * Returns the exact physical boundary where the no-route component around {@code source} meets
+   * routers that originate or forward {@code destination}.
+   */
+  public Set<Link> routeFrontier(RouterId source, Prefix destination) {
+    Set<RouterId> knowing = new HashSet<>(owners(destination));
+    knowing.addAll(
+        state.verification().evidence().forwarders().getOrDefault(destination, Set.of()));
+    Set<Link> frontier = new LinkedHashSet<>();
+    if (knowing.contains(source)) {
+      return frontier;
+    }
+    Topology topology = state.problem().topology();
+    record Hop(RouterId router, int distance) {}
+    Set<RouterId> seen = new HashSet<>(Set.of(source));
+    Deque<Hop> queue = new ArrayDeque<>(List.of(new Hop(source, 0)));
+    int nearest = Integer.MAX_VALUE;
+    while (!queue.isEmpty()) {
+      Hop hop = queue.removeFirst();
+      if (hop.distance() > nearest) {
+        break;
+      }
+      RouterId router = hop.router();
+      List<RouterId> unknown = new ArrayList<>();
+      for (RouterId peer : topology.neighbours(router)) {
+        if (knowing.contains(peer)) {
+          frontier.add(Link.of(router, peer));
+          nearest = hop.distance();
+        } else if (!seen.contains(peer)) {
+          unknown.add(peer);
+        }
+      }
+      if (hop.distance() < nearest) {
+        for (RouterId peer : unknown) {
+          if (seen.add(peer)) {
+            queue.addLast(new Hop(peer, hop.distance() + 1));
+          }
+        }
+      }
+    }
+    return Set.copyOf(frontier);
+  }
+
+  /** Returns whether every observed flow stops at its source because no route exists. */
+  public static boolean noRouteAtSource(DataPlaneEvidence evidence, ForwardingPredicate predicate) {
+    List<DataPlaneEvidence.Trace> traces = evidence.traces().get(predicate);
+    if (traces == null || traces.isEmpty()) {
+      return false;
+    }
+    return traces.stream()
+        .allMatch(
+            trace ->
+                trace.disposition() == DataPlaneEvidence.Disposition.NO_ROUTE
+                    && trace.hops().equals(List.of(predicate.source())));
   }
 
   /** Returns the routers implicated for {@code specification}, in evidence order. */
@@ -71,9 +145,15 @@ public final class RouterEvidence {
   private static Map<Prefix, Set<RouterId>> owners(ProgramModel program) {
     Map<Prefix, Set<RouterId>> owners = new HashMap<>();
     for (ProgramObject object : program.objects()) {
-      List<String> values = new ArrayList<>(object.values("prefix"));
-      values.addAll(object.values("subnet"));
-      object.value("address").ifPresent(address -> values.add(address + "/32"));
+      List<String> values = new ArrayList<>();
+      switch (object.ref().type()) {
+        case "interface" -> {
+          values.addAll(object.values("subnet"));
+          object.value("address").ifPresent(address -> values.add(address + "/32"));
+        }
+        case "bgp-network", "static-route" -> values.addAll(object.values("prefix"));
+        default -> {}
+      }
       for (String value : values) {
         Prefix.tryParse(value)
             .ifPresent(

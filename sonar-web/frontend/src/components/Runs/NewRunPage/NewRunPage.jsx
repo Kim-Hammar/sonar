@@ -26,7 +26,7 @@ const BUDGETS = [
   ['input_tokens', 'Input tokens']
 ]
 
-/** Builds the request body of a new run from the form values. */
+/** Builds the request body of a new agent execution from the form values. */
 export function runRequest(form) {
   const limits = {}
   for (const [key] of BUDGETS) {
@@ -101,7 +101,7 @@ function RunForm({ info, scenarios, onError }) {
     onError(null)
     try {
       const body = await api.createRun(runRequest(form))
-      navigate(`/runs/${body.run.id}`)
+      navigate(`/executions/${body.run.id}`)
     } catch (failure) {
       onError(failure.message)
       setSubmitting(false)
@@ -218,9 +218,9 @@ function RunForm({ info, scenarios, onError }) {
       </Disclosure>
       <div className="NewRunPage-actions">
         <button type="submit" className="button primary" disabled={submitting}>
-          {submitting ? 'Starting…' : 'Start run'}
+          {submitting ? 'Starting…' : 'Start agent execution'}
         </button>
-        <button type="button" className="button quiet" onClick={() => navigate('/runs')}>
+        <button type="button" className="button quiet" onClick={() => navigate('/executions')}>
           Cancel
         </button>
       </div>
@@ -228,7 +228,7 @@ function RunForm({ info, scenarios, onError }) {
   )
 }
 
-/** The page that configures and starts a run; rarely needed settings stay folded away. */
+/** The page that configures and starts an agent execution; rarely needed settings stay folded away. */
 export default function NewRunPage() {
   const info = useInfo()
   const [scenarios, setScenarios] = useState([])
@@ -245,8 +245,8 @@ export default function NewRunPage() {
   return (
     <div className="page NewRunPage">
       <PageHeader
-        title="New run"
-        meta={ready && info.demo ? 'Demo mode: runs use the scripted repairer.' : null}
+        title="New agent execution"
+        meta={ready && info.demo ? 'Demo mode: executions use the scripted repairer.' : null}
       />
       <Alert>{error}</Alert>
       {ready && <RunForm info={info} scenarios={scenarios} onError={setError} />}

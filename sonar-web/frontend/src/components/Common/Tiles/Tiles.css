@@ -1,22 +1,22 @@
-.KpiStrip {
+.Tiles {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
 }
 
-.KpiStrip-tile {
+.Tiles-tile {
   flex: 1 1 120px;
   max-width: 240px;
   padding: 12px 14px;
 }
 
-.KpiStrip-label {
+.Tiles-label {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
 }
 
-.KpiStrip-value {
+.Tiles-value {
   margin-top: 2px;
   font-size: 22px;
   font-weight: 600;
@@ -24,7 +24,7 @@
   letter-spacing: -0.01em;
 }
 
-.KpiStrip-detail {
+.Tiles-detail {
   color: var(--subtle);
   font-size: 12px;
 }

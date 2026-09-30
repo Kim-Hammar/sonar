@@ -95,7 +95,7 @@ export default function RunPage() {
   return (
     <div className="page RunPage">
       <PageHeader
-        eyebrow="Run"
+        eyebrow="Agent execution"
         title={run.name}
         meta={
           <>
@@ -111,7 +111,7 @@ export default function RunPage() {
           active && (
             <button type="button" className="button" onClick={cancel}>
               <Square size={14} />
-              Cancel run
+              Cancel execution
             </button>
           )
         }
@@ -155,7 +155,7 @@ export default function RunPage() {
       {openScenario && (
         <Drawer
           title={openScenario}
-          subtitle="Scenario of this run"
+          subtitle="Scenario of this agent execution"
           onClose={() => show({ scenario: null })}
         >
           <ScenarioInspector

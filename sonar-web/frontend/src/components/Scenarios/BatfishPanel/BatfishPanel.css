@@ -1,0 +1,90 @@
+.BatfishPanel-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+}
+
+.BatfishPanel-start p {
+  margin: 0;
+}
+
+.BatfishPanel-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.BatfishPanel-summary {
+  margin-bottom: 16px;
+}
+
+.BatfishPanel-views {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.BatfishPanel-views .Tabs {
+  flex: 1;
+}
+
+.BatfishPanel-views .Hint {
+  margin-top: 10px;
+}
+
+.BatfishPanel-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.BatfishPanel-filters .FieldLabel {
+  margin-left: 8px;
+}
+
+.BatfishPanel-filters .FieldLabel:first-child {
+  margin-left: 0;
+}
+
+.BatfishPanel-count {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.BatfishPanel-trace {
+  margin-top: 12px;
+  padding: 12px 16px;
+}
+
+.BatfishPanel-traceHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.BatfishPanel-routers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.BatfishPanel-names {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.BatfishPanel .DataTable-frame {
+  max-height: 520px;
+}

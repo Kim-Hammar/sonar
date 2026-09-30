@@ -64,6 +64,19 @@ public record RelationInstance(
     return Collections.unmodifiableNavigableSet(routers);
   }
 
+  /**
+   * Returns every router whose program determined this instance.
+   *
+   * <p>This includes routers of absent optional roles: resolving a join can read the peer router
+   * even when no peer object fills the role yet. A repair of that missing role may therefore edit a
+   * dependency router that is not present in {@link #roles()}.
+   */
+  public NavigableSet<RouterId> dependencyRouters() {
+    NavigableSet<RouterId> routers = new TreeSet<>(routers());
+    reads.forEach(ref -> routers.add(ref.router()));
+    return Collections.unmodifiableNavigableSet(routers);
+  }
+
   /** Returns an identifier derived from the relation and the objects in its roles. */
   public ContentHash id() {
     ContentHash.Builder digest = ContentHash.builder().add(relation);

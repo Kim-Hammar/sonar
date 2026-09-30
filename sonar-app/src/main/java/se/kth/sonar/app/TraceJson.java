@@ -19,16 +19,13 @@ import se.kth.sonar.decision.DecisionProblem;
 import se.kth.sonar.decision.HypothesisRanking;
 import se.kth.sonar.decision.RegionAssessment;
 import se.kth.sonar.execution.Budget;
-import se.kth.sonar.generate.Hypothesis;
 import se.kth.sonar.network.Topology;
 import se.kth.sonar.report.RepairResult;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
-import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SearchSpace;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.spec.Verdict;
-import se.kth.sonar.text.LineEdit;
 import se.kth.sonar.trace.TraceEvent;
 import se.kth.sonar.trace.TraceRecord;
 import se.kth.sonar.verify.DataPlaneEvidence;
@@ -80,6 +77,7 @@ final class TraceJson {
       case TraceEvent.SpaceBuilt built -> space(built, summary, detail);
       case TraceEvent.Decided decided -> decided(decided, summary, detail);
       case TraceEvent.Tried tried -> tried(record.scenario(), tried, summary, detail);
+      case TraceEvent.Rejected rejected -> rejected(rejected, summary, detail);
       case TraceEvent.Adopted adopted -> {
         summary.put("epoch", adopted.epoch());
         summary.put("adopted", adopted.hypotheses().size());
@@ -93,7 +91,9 @@ final class TraceJson {
         remember(record.scenario(), adopted.verification().verdict());
         detail.put("epoch", adopted.epoch());
         ArrayNode hypotheses = detail.putArray("hypotheses");
-        adopted.hypotheses().forEach(hypothesis -> hypotheses.add(hypothesis(hypothesis)));
+        adopted
+            .hypotheses()
+            .forEach(hypothesis -> hypotheses.add(SearchJson.hypothesis(hypothesis)));
         detail.set("verdict", verdict(adopted.verification().verdict()));
         detail.set("evidence", evidence(adopted.verification().evidence(), null));
       }
@@ -113,6 +113,7 @@ final class TraceJson {
       case TraceEvent.SpaceBuilt _ -> "space-built";
       case TraceEvent.Decided _ -> "decided";
       case TraceEvent.Tried _ -> "tried";
+      case TraceEvent.Rejected _ -> "rejected";
       case TraceEvent.Adopted _ -> "adopted";
       case TraceEvent.Finished _ -> "finished";
       case TraceEvent.Failed _ -> "failed";
@@ -151,7 +152,7 @@ final class TraceJson {
     for (Region region : space.regions()) {
       ObjectNode node = regions.addObject();
       node.put("id", region.id().value());
-      node.put("kind", region instanceof RelationRegion ? "relation" : "site");
+      node.put("kind", SearchJson.kind(region));
       ArrayNode routers = node.putArray("routers");
       region.routers().forEach(router -> routers.add(router.name()));
       node.put("targets", region.targets().size());
@@ -262,7 +263,7 @@ final class TraceJson {
     summary.put("change", tried.change().name().toLowerCase(Locale.ROOT).replace('_', '-'));
     verdictCounts(verdict, summary);
     detail.put("region", tried.region().value());
-    detail.set("hypothesis", hypothesis(tried.hypothesis()));
+    detail.set("hypothesis", SearchJson.hypothesis(tried.hypothesis()));
     detail.put("change", summary.get("change").asText());
     Map<String, String> before = states.getOrDefault(scenario, Map.of());
     Map<String, String> after = statuses(verdict);
@@ -282,6 +283,16 @@ final class TraceJson {
       }
     }
     detail.set("evidence", evidence(tried.verification().evidence(), changed));
+  }
+
+  private void rejected(TraceEvent.Rejected rejected, ObjectNode summary, ObjectNode detail) {
+    summary.put("region", rejected.region().value());
+    summary.put("hypothesis", rejected.hypothesis().id().abbreviated());
+    summary.put("change", "verification-error");
+    detail.put("region", rejected.region().value());
+    detail.set("hypothesis", SearchJson.hypothesis(rejected.hypothesis()));
+    detail.put("change", "verification-error");
+    detail.put("reason", rejected.reason());
   }
 
   private void finished(RepairResult result, ObjectNode summary, ObjectNode detail) {
@@ -310,51 +321,6 @@ final class TraceJson {
       case RepairResult.Stop.SearchExhausted _ -> "search-exhausted";
       case RepairResult.Stop.Failed _ -> "failed";
     };
-  }
-
-  private ObjectNode hypothesis(Hypothesis hypothesis) {
-    ObjectNode node = mapper.createObjectNode();
-    node.put("id", hypothesis.id().hex());
-    ArrayNode routers = node.putArray("routers");
-    hypothesis.routers().forEach(router -> routers.add(router.name()));
-    node.put("cost", hypothesis.cost());
-    node.put("support", hypothesis.support().name().toLowerCase(Locale.ROOT));
-    ArrayNode edits = node.putArray("edits");
-    hypothesis.transaction().edits().forEach(edit -> edits.add(edit(edit)));
-    return node;
-  }
-
-  private ObjectNode edit(LineEdit edit) {
-    ObjectNode node = mapper.createObjectNode();
-    node.put("router", edit.router().name());
-    switch (edit) {
-      case LineEdit.Delete delete -> {
-        node.put("op", "delete");
-        node.put("first", delete.span().first());
-        node.put("last", delete.span().last());
-      }
-      case LineEdit.Replace replace -> {
-        node.put("op", "replace");
-        node.put("first", replace.span().first());
-        node.put("last", replace.span().last());
-        lines(node, replace.lines());
-      }
-      case LineEdit.InsertAfter insert -> {
-        node.put("op", "insert");
-        node.put("after", insert.line());
-        lines(node, insert.lines());
-      }
-      case LineEdit.Append append -> {
-        node.put("op", "append");
-        lines(node, append.lines());
-      }
-    }
-    return node;
-  }
-
-  private static void lines(ObjectNode node, List<String> lines) {
-    ArrayNode array = node.putArray("lines");
-    lines.forEach(array::add);
   }
 
   private static void verdictCounts(Verdict verdict, ObjectNode summary) {

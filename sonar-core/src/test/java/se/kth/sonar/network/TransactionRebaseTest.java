@@ -49,4 +49,13 @@ class TransactionRebaseTest {
         Transaction.of(BASE, List.of(new LineEdit.Delete(new SourceSpan(R1, 2, 3))));
     assertThat(clashing.rebaseOver(adopted)).isEmpty();
   }
+
+  @Test
+  void anIdenticalInsertionIsNotAppliedTwice() {
+    Transaction insertion =
+        Transaction.of(BASE, List.of(new LineEdit.InsertAfter(R1, 1, List.of("new"))));
+    Snapshot.Delta adopted = BASE.patch(insertion);
+
+    assertThat(insertion.rebaseOver(adopted)).isEmpty();
+  }
 }

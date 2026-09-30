@@ -28,6 +28,11 @@ public final class SpectrumFactor implements PriorFactor {
       new ContentCache<>(CACHE_CAPACITY);
 
   @Override
+  public String name() {
+    return "spectrum";
+  }
+
+  @Override
   public double weight(Region region, RepairState state) {
     Map<RouterId, Double> scores =
         suspiciousness.get(state.verification().digest(), () -> suspiciousness(state));
