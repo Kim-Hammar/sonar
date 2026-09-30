@@ -32,7 +32,8 @@ public record ProgramObject(
 
   /** Returns the first value of {@code attribute}, if it has one. */
   public Optional<String> value(String attribute) {
-    return values(attribute).stream().findFirst();
+    List<String> values = values(attribute);
+    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
   /** Returns the values of {@code attribute}, which are empty if it has none. */
@@ -46,18 +47,71 @@ public record ProgramObject(
   }
 
   /**
-   * Identifies an object by its type, its router, and its key values.
-   *
-   * @param type the object type's name
-   * @param router the router whose configuration defines the object
-   * @param key the key values in key order; empty for a router
+   * Identifies an object by its type, its router, and its key values. References are compared and
+   * hashed by value; the hash is kept, because references key most of the model's maps.
    */
-  public record Ref(String type, RouterId router, List<String> key) {
-    /** Copies the key. */
-    public Ref {
-      Objects.requireNonNull(type, "type");
-      Objects.requireNonNull(router, "router");
-      key = List.copyOf(key);
+  public static final class Ref {
+    private final String type;
+    private final RouterId router;
+    private final List<String> key;
+    private final int hash;
+
+    /**
+     * Creates a reference.
+     *
+     * @param type the object type's name
+     * @param router the router whose configuration defines the object
+     * @param key the key values in key order; empty for a router
+     */
+    public Ref(String type, RouterId router, List<String> key) {
+      this.type = Objects.requireNonNull(type, "type");
+      this.router = Objects.requireNonNull(router, "router");
+      this.key = List.copyOf(key);
+      this.hash = Objects.hash(type, router, this.key);
+    }
+
+    /** Returns the object type's name. */
+    public String type() {
+      return type;
+    }
+
+    /** Returns the router whose configuration defines the object. */
+    public RouterId router() {
+      return router;
+    }
+
+    /** Returns the key values in key order; empty for a router. */
+    public List<String> key() {
+      return key;
+    }
+
+    /** Parses the reference text written by {@link #toString()}. */
+    public static Ref parse(String text) {
+      String[] parts = text.split(":", 3);
+      if (parts.length < 2) {
+        throw new IllegalArgumentException("not an object reference: " + text);
+      }
+      List<String> key = parts.length == 3 ? List.of(parts[2].split(" ")) : List.of();
+      return new Ref(parts[0], RouterId.of(parts[1]), key);
+    }
+
+    /** Returns whether {@code text} is the reference text of an object of type {@code type}. */
+    public static boolean isReference(String text, String type) {
+      return text.startsWith(type + ":");
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof Ref ref
+          && hash == ref.hash
+          && type.equals(ref.type)
+          && router.equals(ref.router)
+          && key.equals(ref.key);
+    }
+
+    @Override
+    public int hashCode() {
+      return hash;
     }
 
     @Override

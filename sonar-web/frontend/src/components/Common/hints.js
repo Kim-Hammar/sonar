@@ -215,6 +215,13 @@ export const HINTS = {
     probability: {
       text: 'For a region, the probability that it holds the repair, given that one of the offered regions does. For none of these, the probability that none of them does.'
     },
+    candidate: { text: 'A candidate edit the question offered the model, by its identifier.' },
+    rankProbability: {
+      text: 'The probability that the candidate is the repair, given that one of the offered candidates is.'
+    },
+    options: {
+      text: 'The choices the question offered the model, each described as the model saw it.'
+    },
     context: { text: 'The facts sent to the model with the question, one section each.' },
     exchanges: {
       text: 'Each request sent to the decision model for this question, with its reply, retries included. A cached reply was read from the decision cache in the output directory, without a provider call.'

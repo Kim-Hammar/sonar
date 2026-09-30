@@ -1,11 +1,18 @@
 package se.kth.sonar.search;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import se.kth.sonar.common.ContentHash;
+import se.kth.sonar.common.Distribution;
 import se.kth.sonar.generate.Hypothesis;
 import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.spec.Specification;
@@ -110,19 +117,73 @@ public sealed interface Region permits SiteRegion, RelationRegion {
     }
 
     /**
-     * Generated candidates that passed admissibility, in generation order.
+     * Generated candidates that passed admissibility, in generation order until they are ranked,
+     * and then most promising first.
      *
      * @param list the candidates
+     * @param ranking the probability that each candidate is the repair, once the candidates are
+     *     ranked
      */
-    record Admitted(List<Hypothesis> list) implements Hypotheses {
-      /** Copies the list. */
+    record Admitted(List<Hypothesis> list, Optional<Distribution<ContentHash>> ranking)
+        implements Hypotheses {
+      /** Copies the list and checks that a ranking covers exactly the candidates. */
       public Admitted {
         list = List.copyOf(Objects.requireNonNull(list, "list"));
+        Objects.requireNonNull(ranking, "ranking");
+        if (ranking.isPresent()) {
+          Set<ContentHash> ids = new HashSet<>();
+          list.forEach(hypothesis -> ids.add(hypothesis.id()));
+          if (!ranking.get().outcomes().equals(ids)) {
+            throw new IllegalArgumentException("the ranking must cover exactly the candidates");
+          }
+        }
+      }
+
+      /** Unranked candidates. */
+      public Admitted(List<Hypothesis> list) {
+        this(list, Optional.empty());
       }
 
       @Override
       public int bound() {
         return list.size();
+      }
+
+      /** Returns whether the candidates are ranked. */
+      public boolean ranked() {
+        return ranking.isPresent();
+      }
+
+      /** Returns the candidates in ranking order, with their probabilities. */
+      public Admitted rankedBy(Distribution<ContentHash> probabilities) {
+        Map<ContentHash, Hypothesis> byId = new HashMap<>();
+        list.forEach(hypothesis -> byId.put(hypothesis.id(), hypothesis));
+        List<Hypothesis> ordered = new ArrayList<>();
+        for (ContentHash id : probabilities.ranked()) {
+          Hypothesis hypothesis = byId.remove(id);
+          if (hypothesis != null) {
+            ordered.add(hypothesis);
+          }
+        }
+        for (Hypothesis hypothesis : list) {
+          if (byId.containsKey(hypothesis.id())) {
+            ordered.add(hypothesis);
+          }
+        }
+        Map<ContentHash, Double> weights = new LinkedHashMap<>();
+        ordered.forEach(
+            hypothesis -> weights.put(hypothesis.id(), probabilities.probability(hypothesis.id())));
+        return new Admitted(ordered, Optional.of(Distribution.of(weights)));
+      }
+
+      /** Returns the candidates other than {@code removed}, keeping the ranking of the rest. */
+      public Admitted without(Collection<ContentHash> removed) {
+        Set<ContentHash> gone = Set.copyOf(removed);
+        List<Hypothesis> kept = list.stream().filter(h -> !gone.contains(h.id())).toList();
+        if (kept.isEmpty() || ranking.isEmpty()) {
+          return new Admitted(kept);
+        }
+        return new Admitted(kept, Optional.of(ranking.get().without(gone)));
       }
     }
   }

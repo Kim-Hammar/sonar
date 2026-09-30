@@ -23,7 +23,7 @@ const DETAIL = {
   question: 'region',
   outcome: 'answered',
   context: [{ title: 'Violated specifications', body: 'reachability|r1|10.0.0.0/24' }],
-  options: ['site:r1'],
+  options: [{ id: 'site:r1', description: 'edit interface Loopback0 on r1' }],
   answer: { none: 0.1, regions: [{ id: 'site:r1', probability: 0.9 }] },
   exchanges: [
     {

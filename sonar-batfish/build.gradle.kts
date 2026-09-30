@@ -17,9 +17,28 @@ val verifyBatfishJar = tasks.register<VerifyBatfishJar>("verifyBatfishJar") {
 dependencies {
     api(project(":sonar-core"))
     implementation(files(batfishJar).builtBy(verifyBatfishJar))
+    testImplementation(project(":sonar-dataset"))
 }
 
 tasks.withType<Test>().configureEach {
     maxHeapSize = "2g"
     jvmArgs("--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow")
+}
+
+tasks.test {
+    useJUnitPlatform { excludeTags("audit") }
+}
+
+val audit by tasks.registering(Test::class) {
+    description = "Runs the dataset probes, which need ../dataset."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("audit") }
+    outputs.upToDateWhen { false }
+    maxHeapSize = "8g"
+    testLogging.showStandardStreams = true
+    for (name in listOf("sonar.audit.scenarios", "sonar.probe.destination")) {
+        providers.gradleProperty(name).orNull?.let { systemProperty(name, it) }
+    }
 }

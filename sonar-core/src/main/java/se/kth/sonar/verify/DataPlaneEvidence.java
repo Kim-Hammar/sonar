@@ -12,21 +12,25 @@ import se.kth.sonar.text.RouterId;
 /**
  * Data-plane facts that explain violated specifications and localise faults.
  *
- * @param traces how traffic for each violated predicate was forwarded
- * @param routeHolders the routers that hold a route to each destination
+ * @param traces how traffic for each specified predicate was forwarded
+ * @param routeHolders the routers that hold a BGP route to each destination
+ * @param forwarders the routers that have a forwarding entry for each destination
  */
 public record DataPlaneEvidence(
-    Map<ForwardingPredicate, List<Trace>> traces, Map<Prefix, Set<RouterId>> routeHolders) {
+    Map<ForwardingPredicate, List<Trace>> traces,
+    Map<Prefix, Set<RouterId>> routeHolders,
+    Map<Prefix, Set<RouterId>> forwarders) {
 
   /** Copies the maps. */
   public DataPlaneEvidence {
     traces = Map.copyOf(traces);
     routeHolders = Map.copyOf(routeHolders);
+    forwarders = Map.copyOf(forwarders);
   }
 
   /** Returns evidence without facts. */
   public static DataPlaneEvidence none() {
-    return new DataPlaneEvidence(Map.of(), Map.of());
+    return new DataPlaneEvidence(Map.of(), Map.of(), Map.of());
   }
 
   /** The fate of a traced flow. */

@@ -9,8 +9,12 @@ object router
   attribute ospf-process = router-ospf.process
   attribute ospf-router-id = ospf-router-id.id
   attribute ospf-redistribution ref route-map = ospf-redistribute-bgp.map ospf-redistribute-bgp-metric.map
+  attribute isis-process = router-isis.process
   attribute isis-net = isis-net.net
   attribute isis-level = isis-is-type.level
+  attribute isis-area derived isis-area word
+  attribute design-asn derived design-asn asn
+  attribute loopback-address derived loopback-address address
 
 object interface
   key name from interface
@@ -30,6 +34,9 @@ object interface
   attribute subnet derived subnet prefix
   attribute ospf-effective-area derived ospf-area area
   attribute link-peer derived link-peer ref interface
+  attribute igp-peer derived igp-peer ref interface
+  attribute igp-enabled derived igp-enabled flag
+  attribute isis-level-1 derived isis-level-1 flag
 
 object peer-group
   key group from peer-group
@@ -55,6 +62,11 @@ object bgp-network
   key network mask from bgp-network
   attribute prefix derived network-prefix prefix
 
+object ospf-network
+  key network wildcard from ospf-network
+  attribute area = ospf-network.area
+  attribute covered derived ospf-coverage ref interface
+
 object static-route
   key network mask from static-route-interface static-route-next-hop
   attribute interface ref interface = static-route-interface.interface
@@ -75,6 +87,7 @@ object route-map-entry
   attribute as-path-prepend many = set-as-path-prepend.asns
   attribute communities many = set-community.communities
   attribute next-hop = set-next-hop.next-hop
+  attribute next-hop-router derived address-owner ref router
   attribute tag = set-tag.tag
 
 object prefix-list
@@ -100,15 +113,18 @@ relation bgp-session symmetric
   role remote bgp-neighbor optional
   join remote.router = local.peer-router
   join local.router = remote.peer-router
-  require hard exists remote
+  require soft exists remote
   require hard equal local.effective-remote-as remote.router.bgp-asn
 
 relation bgp-activation
   role neighbor bgp-neighbor each
-  require hard exists neighbor.activated when neighbor.router.bgp-ipv4-unicast-off
+  require soft exists neighbor.activated when neighbor.router.bgp-ipv4-unicast-off
+  require soft absent neighbor.shutdown
 
 relation bgp-policy
   role neighbor bgp-neighbor each
+  require hard exists neighbor.peer-router
+  require hard exists neighbor.effective-remote-as
   require hard resolves neighbor.peer-group
   require hard resolves neighbor.update-source
   require hard resolves neighbor.route-map-in
@@ -132,10 +148,13 @@ relation link symmetric
   join b = a.link-peer
   require hard exists b
   require hard equal a.subnet b.subnet
+  require soft absent a.shutdown
+  require soft exists a.igp-enabled when a.igp-peer
   require soft agree a.ospf-effective-area b.ospf-effective-area
   require soft agree a.ospf-network-type b.ospf-network-type
   require soft agree a.isis-enabled b.isis-enabled
   require soft agree a.isis-circuit-type b.isis-circuit-type
+  require soft equal a.router.isis-area b.router.isis-area when a.isis-level-1
 
 relation interface-filter
   role interface interface each
@@ -146,25 +165,46 @@ relation route-map-match
   role entry route-map-entry each
   require hard resolves entry.match-prefix-list
   require hard resolves entry.match-community
+  require soft exists entry.next-hop-router when entry.next-hop
 
 relation redistribution
   role router router each
   require hard resolves router.ospf-redistribution
 
+relation bgp-design
+  role router router each
+  require soft equal router.bgp-asn router.design-asn when router.bgp-asn
+
 relation router-identity
   role router router each
   require hard distinct router.hostname
-  require hard distinct router.bgp-router-id
+  require soft distinct router.bgp-router-id
   require hard distinct router.ospf-router-id
   require hard distinct router.isis-net
+  require soft equal router.ospf-router-id router.loopback-address when router.ospf-router-id
+  require soft equal router.bgp-router-id router.loopback-address when router.bgp-router-id
+
+relation ospf-coverage
+  role network ospf-network each
+  require convention exists network.covered
 
 relation address-identity
   role interface interface each
   require hard distinct interface.address
 
+domain router-bgp asn values router.design-asn in router
+domain ospf-router-id id values router.loopback-address in router
+domain bgp-router-id id values router.loopback-address in router
+domain router-bgp asn values router.bgp-asn in neighbours
 domain neighbor-remote-as asn related bgp-session remote.router.bgp-asn
 domain neighbor-remote-as asn values router.bgp-asn in network
+domain neighbor-remote-as peer verifier route-holder
+domain neighbor-remote-as peer verifier source
+domain neighbor-remote-as peer observed in network
 domain neighbor-remote-as peer values interface.address in network
+domain neighbor-peer-group peer verifier route-holder
+domain neighbor-peer-group peer verifier source
+domain neighbor-peer-group peer observed in network
 domain neighbor-peer-group group names peer-group in router
 domain neighbor-activate peer values bgp-neighbor.peer in router
 domain neighbor-route-map map names route-map in router
@@ -180,6 +220,7 @@ domain ip-ospf-area process values router.ospf-process in router
 domain ip-ospf-cost cost values interface.ospf-cost in neighbours
 domain ip-ospf-network type literals
 domain isis-circuit-type level literals
+domain isis-is-type level literals
 domain isis-metric metric values interface.isis-metric in neighbours
 domain ip-access-group acl names acl in router
 domain ip-access-group direction literals

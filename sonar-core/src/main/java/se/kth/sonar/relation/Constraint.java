@@ -17,6 +17,18 @@ public sealed interface Constraint {
   }
 
   /**
+   * The path has no value: the attribute is absent, the flag is not set, or the role is unfilled.
+   *
+   * @param path the path
+   */
+  record Absent(AttributePath path) implements Constraint {
+    /** Checks the path. */
+    public Absent {
+      Objects.requireNonNull(path, "path");
+    }
+  }
+
+  /**
    * Both paths have values and the values are equal.
    *
    * @param left one path

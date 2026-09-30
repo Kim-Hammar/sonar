@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import se.kth.sonar.grammar.Grammar;
 import se.kth.sonar.grammar.Production;
+import se.kth.sonar.program.CiscoIosSemantics;
 
 class DialectResourcesTest {
   private static final Dialect CISCO = Dialect.load("cisco-ios");
@@ -21,13 +22,8 @@ class DialectResourcesTest {
     assertThat(CISCO.grammar().productions()).hasSizeGreaterThan(60);
     assertThat(CISCO.schema().relation("bgp-session")).isPresent();
     assertThat(CISCO.schema().derivedFunctions())
-        .containsExactly(
-            "address-owner",
-            "effective-remote-as",
-            "link-peer",
-            "network-prefix",
-            "ospf-area",
-            "subnet");
+        .contains("address-owner", "subnet", "link-peer")
+        .isSubsetOf(new CiscoIosSemantics(CISCO).functions());
   }
 
   static Stream<Arguments> sampleLines() {

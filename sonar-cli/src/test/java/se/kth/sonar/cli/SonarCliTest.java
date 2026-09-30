@@ -48,7 +48,7 @@ class SonarCliTest {
   }
 
   @Test
-  void repairRecordsARunThatStopsAtTheEnginePlaceholder(@TempDir Path dataset, @TempDir Path output)
+  void repairRecordsARunThatStopsWithinItsBudget(@TempDir Path dataset, @TempDir Path output)
       throws IOException {
     TestDataset.create(dataset, 1);
     Result result =
@@ -61,16 +61,17 @@ class SonarCliTest {
             "--output",
             output.toString(),
             "--max-verifications",
-            "10");
-    assertThat(result.status()).isEqualTo(1);
-    assertThat(result.out())
-        .contains("scenario-001  failed: RepairEngine.repair is not implemented yet");
+            "3",
+            "--max-decisions",
+            "0");
+    assertThat(result.status()).isZero();
+    assertThat(result.out()).contains("scenario-001  budgetexhausted");
     try (Stream<Path> runs = Files.list(output.resolve("runs"))) {
       Path run = runs.findFirst().orElseThrow();
       assertThat(Files.readString(run.resolve("run.json")))
           .contains("\"status\":\"finished\"")
-          .contains("\"verifications\":10");
-      assertThat(Files.readAllLines(run.resolve("events.jsonl"))).hasSize(2);
+          .contains("\"verifications\":3");
+      assertThat(Files.readAllLines(run.resolve("events.jsonl"))).hasSizeGreaterThan(3);
     }
   }
 

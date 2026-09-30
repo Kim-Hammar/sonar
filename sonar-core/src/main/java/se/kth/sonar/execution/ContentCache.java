@@ -14,17 +14,36 @@ import se.kth.sonar.common.ContentHash;
  * A concurrent memo table keyed by content digests.
  *
  * <p>Concurrent requests for the same key run the computation once and share its result. A failed
- * computation is not remembered, so a later request retries it.
+ * computation is not remembered, so a later request retries it. A bounded cache forgets every entry
+ * once it holds more than its capacity, which keeps long runs from growing without limit at the
+ * price of an occasional recomputation.
  *
  * @param <V> the value type
  */
 public final class ContentCache<V> {
   private final ConcurrentHashMap<ContentHash, CompletableFuture<V>> entries =
       new ConcurrentHashMap<>();
+  private final int capacity;
+
+  /** Creates a cache without a capacity. */
+  public ContentCache() {
+    this(Integer.MAX_VALUE);
+  }
+
+  /** Creates a cache that forgets everything once it holds more than {@code capacity} entries. */
+  public ContentCache(int capacity) {
+    if (capacity < 1) {
+      throw new IllegalArgumentException("capacity must be at least 1: " + capacity);
+    }
+    this.capacity = capacity;
+  }
 
   /** Returns the value for {@code key}, running {@code computation} if no value is cached. */
   public V get(ContentHash key, Supplier<? extends V> computation) {
     Objects.requireNonNull(key, "key");
+    if (entries.size() > capacity) {
+      entries.clear();
+    }
     CompletableFuture<V> mine = new CompletableFuture<>();
     CompletableFuture<V> existing = entries.putIfAbsent(key, mine);
     if (existing != null) {

@@ -166,33 +166,40 @@ public final class SearchSpace {
   /** Removes regions; partitions keep their other regions, and empty partitions disappear. */
   public SearchSpace without(Collection<Region.Id> removed) {
     Set<Region.Id> gone = new HashSet<>(removed);
-    List<Region> kept =
-        regions.values().stream().filter(region -> !gone.contains(region.id())).toList();
+    SequencedMap<Region.Id, Region> kept = new LinkedHashMap<>(regions);
+    kept.keySet().removeAll(gone);
     List<Partition> trimmed = new ArrayList<>();
+    Map<Region.Id, Partition> membership = new HashMap<>();
     for (Partition partition : partitions) {
       List<Region.Id> members =
           partition.regions().stream().filter(id -> !gone.contains(id)).toList();
       if (!members.isEmpty()) {
-        trimmed.add(new Partition(partition.id(), partition.signature(), members));
+        Partition remaining = new Partition(partition.id(), partition.signature(), members);
+        trimmed.add(remaining);
+        members.forEach(id -> membership.put(id, remaining));
       }
     }
-    return of(kept, trimmed, capacity);
+    return new SearchSpace(kept, List.copyOf(trimmed), Map.copyOf(membership), capacity);
   }
 
   /**
-   * Replaces the region with the same identifier, for example by its expansion.
+   * Replaces the region with the same identifier, for example by its expansion. The partition stays
+   * as it is: the capacity bounds a partition when it is formed, and a region whose generated
+   * candidates outnumber its earlier bound does not split it.
    *
-   * @throws IllegalArgumentException if there is no such region or the result breaks an invariant
+   * @throws IllegalArgumentException if there is no such region or the signature differs
    */
   public SearchSpace replace(Region replacement) {
-    if (!regions.containsKey(replacement.id())) {
+    Region current = regions.get(replacement.id());
+    if (current == null) {
       throw new IllegalArgumentException("no region " + replacement.id());
     }
-    List<Region> updated =
-        regions.values().stream()
-            .map(region -> region.id().equals(replacement.id()) ? replacement : region)
-            .toList();
-    return of(updated, partitions, capacity);
+    if (!current.signature().equals(replacement.signature())) {
+      throw new IllegalArgumentException("region " + replacement.id() + " changed its targets");
+    }
+    SequencedMap<Region.Id, Region> updated = new LinkedHashMap<>(regions);
+    updated.put(replacement.id(), replacement);
+    return new SearchSpace(updated, partitions, partitionOf, capacity);
   }
 
   @Override

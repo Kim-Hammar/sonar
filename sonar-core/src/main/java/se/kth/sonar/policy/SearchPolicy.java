@@ -33,6 +33,13 @@ public interface SearchPolicy {
     record Expand(Region.Id region) implements Action {}
 
     /**
+     * Ask the decision model to rank the candidates of a region.
+     *
+     * @param region the region
+     */
+    record Rank(Region.Id region) implements Action {}
+
+    /**
      * Verify candidates of a region as one batch.
      *
      * @param region the region

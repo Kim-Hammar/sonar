@@ -1,19 +1,101 @@
 package se.kth.sonar.prior;
 
-import se.kth.sonar.common.NotImplemented;
-import se.kth.sonar.common.Placeholder;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import se.kth.sonar.execution.ContentCache;
+import se.kth.sonar.generate.Hypothesis;
+import se.kth.sonar.generate.Provenance;
+import se.kth.sonar.program.ProgramModel;
+import se.kth.sonar.program.RelationEvaluator;
+import se.kth.sonar.program.RelationInstance;
+import se.kth.sonar.relation.RelationType;
+import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.search.Region;
+import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.state.RepairState;
 
 /**
- * Weights a region by the relation requirements its candidates restore: a region that completes a
- * violated hard requirement weighs more than one that completes a soft requirement, which weighs
- * more than a region that completes none.
+ * Weights a region by the relation requirements its candidates restore.
+ *
+ * <p>The instances of a relation are exchangeable observations of each of its requirements. A
+ * requirement that holds in {@code s} instances and is violated in {@code v} gives the region that
+ * restores it the Jeffreys posterior odds {@code (s + 1/2) / (v + 1/2)}: a requirement that holds
+ * everywhere but in one place strongly implicates that place, while one violated all over the
+ * network says little. A region takes the largest odds over the requirements it restores, and at
+ * least one, so no region loses support.
  */
-@Placeholder
 public final class RelationFactor implements PriorFactor {
+  private static final int CACHE_CAPACITY = 64;
+
+  private final RelationEvaluator evaluator;
+  private final ContentCache<Map<Restored, Tally>> tallies = new ContentCache<>(CACHE_CAPACITY);
+
+  private record Restored(String relation, Requirement requirement) {}
+
+  /** Creates a factor that checks requirements with {@code evaluator}. */
+  public RelationFactor(RelationEvaluator evaluator) {
+    this.evaluator = evaluator;
+  }
+
   @Override
   public double weight(Region region, RepairState state) {
-    throw new NotImplemented("RelationFactor.weight");
+    Map<Restored, Tally> counts =
+        tallies.get(state.program().snapshot().id(), () -> tallies(state.program()));
+    double weight = 1;
+    for (Restored restored : restored(region)) {
+      Tally tally = counts.get(restored);
+      if (tally != null) {
+        weight = Math.max(weight, tally.odds());
+      }
+    }
+    return weight;
+  }
+
+  /** Returns the requirements the region's candidates restore. */
+  private static Set<Restored> restored(Region region) {
+    Set<Restored> result = new LinkedHashSet<>();
+    if (region instanceof RelationRegion relation) {
+      for (Requirement requirement : relation.instance().violated()) {
+        if (requirement.signals()) {
+          result.add(new Restored(relation.instance().relation(), requirement));
+        }
+      }
+    }
+    if (region.hypotheses() instanceof Region.Hypotheses.Admitted admitted) {
+      for (Hypothesis hypothesis : admitted.list()) {
+        for (Provenance.Restored restored : hypothesis.restores()) {
+          if (restored.requirement().signals()) {
+            result.add(new Restored(restored.relation(), restored.requirement()));
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  /** Counts, for every requirement, the instances that satisfy it and those that violate it. */
+  private Map<Restored, Tally> tallies(ProgramModel program) {
+    Map<Restored, Tally> counts = new HashMap<>();
+    for (RelationInstance instance : program.instances()) {
+      RelationType relation = program.schema().relation(instance.relation()).orElseThrow();
+      for (Requirement requirement : relation.requirements()) {
+        if (!requirement.signals()) {
+          continue;
+        }
+        Restored key = new Restored(instance.relation(), requirement);
+        if (instance.violated().contains(requirement)) {
+          counts.merge(key, new Tally(0, 1), RelationFactor::sum);
+        } else if (evaluator.applies(program, instance, requirement)) {
+          counts.merge(key, new Tally(1, 0), RelationFactor::sum);
+        }
+      }
+    }
+    return Map.copyOf(counts);
+  }
+
+  private static Tally sum(Tally left, Tally right) {
+    return new Tally(left.successes() + right.successes(), left.failures() + right.failures());
   }
 }

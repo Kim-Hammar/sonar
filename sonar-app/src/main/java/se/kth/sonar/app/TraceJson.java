@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.decision.DecisionOutcome;
 import se.kth.sonar.decision.DecisionProblem;
 import se.kth.sonar.decision.HypothesisRanking;
@@ -156,6 +157,7 @@ final class TraceJson {
       node.put("targets", region.targets().size());
       node.put("bound", region.bound());
       node.put("partition", space.partitionOf(region.id()).id().value());
+      built.prior().ifPresent(prior -> node.put("prior", prior.probability(region.id())));
     }
     ArrayNode partitions = detail.putArray("partitions");
     for (Partition partition : space.partitions()) {
@@ -188,12 +190,14 @@ final class TraceJson {
       node.put("body", section.body());
     }
     ArrayNode options = detail.putArray("options");
-    switch (problem) {
-      case DecisionProblem.RegionChoice choice ->
-          choice.regions().forEach(region -> options.add(region.id().value()));
-      case DecisionProblem.HypothesisChoice choice ->
-          choice.hypotheses().forEach(hypothesis -> options.add(hypothesis.id().hex()));
-    }
+    problem
+        .options()
+        .forEach(
+            (id, description) -> {
+              ObjectNode option = options.addObject();
+              option.put("id", id);
+              option.put("description", description);
+            });
     switch (outcome) {
       case DecisionOutcome.Answered<?> answered -> detail.set("answer", answer(answered.answer()));
       case DecisionOutcome.Unavailable<?> unavailable -> detail.put("reason", unavailable.reason());
@@ -239,7 +243,11 @@ final class TraceJson {
       }
     } else if (answer instanceof HypothesisRanking ranking) {
       ArrayNode order = node.putArray("order");
-      ranking.order().forEach(id -> order.add(id.hex()));
+      for (ContentHash id : ranking.order()) {
+        ObjectNode candidate = order.addObject();
+        candidate.put("id", id.hex());
+        candidate.put("probability", ranking.probabilities().probability(id));
+      }
     } else {
       node.put("text", String.valueOf(answer));
     }

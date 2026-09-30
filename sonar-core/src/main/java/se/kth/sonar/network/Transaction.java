@@ -1,12 +1,17 @@
 package se.kth.sonar.network;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.NavigableSet;
+import java.util.Optional;
 import java.util.TreeMap;
 import se.kth.sonar.common.ContentHash;
-import se.kth.sonar.common.NotImplemented;
+import se.kth.sonar.text.ConfigText;
+import se.kth.sonar.text.LineDiff;
 import se.kth.sonar.text.LineEdit;
 import se.kth.sonar.text.RouterId;
 
@@ -76,11 +81,41 @@ public final class Transaction {
   }
 
   /**
-   * Re-expresses this transaction against the result of {@code adopted}, shifting line numbers past
-   * the adopted edits. Fails when the two transactions change the same lines.
+   * Re-expresses this transaction against the result of {@code adopted}: on every router the
+   * adoption changed, both changes are applied to the common base together and the result is diffed
+   * against the adopted text. Returns nothing when the two change the same lines.
+   *
+   * @throws IllegalStateException if this transaction was not built against {@code adopted}'s base
    */
-  public Transaction rebaseOver(Snapshot.Delta adopted) {
-    throw new NotImplemented("Transaction.rebaseOver");
+  public Optional<Transaction> rebaseOver(Snapshot.Delta adopted) {
+    List<LineEdit> rebased = new ArrayList<>();
+    Map<RouterId, List<LineEdit>> byRouter = new LinkedHashMap<>();
+    for (LineEdit edit : edits) {
+      byRouter.computeIfAbsent(edit.router(), router -> new ArrayList<>()).add(edit);
+    }
+    for (Map.Entry<RouterId, List<LineEdit>> entry : byRouter.entrySet()) {
+      RouterId router = entry.getKey();
+      ConfigText before = adopted.before().text(router);
+      if (!before.digest().equals(base.get(router))) {
+        throw new IllegalStateException(
+            "transaction " + id.abbreviated() + " was built for another version of " + router);
+      }
+      if (!adopted.changed().contains(router)) {
+        rebased.addAll(entry.getValue());
+        continue;
+      }
+      ConfigText after = adopted.after().text(router);
+      List<LineEdit> together = new ArrayList<>(LineDiff.between(router, before, after));
+      together.addAll(entry.getValue());
+      ConfigText merged;
+      try {
+        merged = before.apply(together);
+      } catch (IllegalArgumentException conflict) {
+        return Optional.empty();
+      }
+      rebased.addAll(LineDiff.between(router, after, merged));
+    }
+    return rebased.isEmpty() ? Optional.empty() : Optional.of(of(adopted.after(), rebased));
   }
 
   private static void encode(ContentHash.Builder digest, LineEdit edit) {

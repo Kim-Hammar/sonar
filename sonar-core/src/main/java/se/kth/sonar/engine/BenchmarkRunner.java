@@ -23,6 +23,8 @@ import se.kth.sonar.trace.TraceSink;
  * scenario order.
  */
 public final class BenchmarkRunner {
+  private static final System.Logger LOG = System.getLogger(BenchmarkRunner.class.getName());
+
   private final Repairer repairer;
   private final ExecutionContext context;
 
@@ -117,6 +119,7 @@ public final class BenchmarkRunner {
       }
       String reason =
           failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+      LOG.log(System.Logger.Level.WARNING, "repair of " + scenario + " failed", failure);
       TraceSink.emit(new TraceEvent.Failed(reason));
       return new Outcome.Failed(scenario, reason);
     }

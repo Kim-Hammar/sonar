@@ -1,9 +1,19 @@
 package se.kth.sonar.relation;
 
-/** Where a candidate value comes from, which orders candidates before any evidence is weighed. */
+/**
+ * Where a candidate value comes from, strongest first, which orders candidates before any evidence
+ * is weighed.
+ */
 public enum ValueSupport {
-  /** The value occurs in the program or in the verifier's observations. */
+  /** The value comes from the verifier's observations or from the relation instance completed. */
+  EVIDENCED,
+  /** The value occurs in the program. */
   OBSERVED,
   /** The value is invented to complete a structure, such as a fresh name. */
-  INVENTED
+  INVENTED;
+
+  /** Returns the weaker of two supports. */
+  public ValueSupport weaker(ValueSupport other) {
+    return compareTo(other) >= 0 ? this : other;
+  }
 }

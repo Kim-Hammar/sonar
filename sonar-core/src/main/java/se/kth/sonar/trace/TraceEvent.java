@@ -2,6 +2,8 @@ package se.kth.sonar.trace;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import se.kth.sonar.common.Distribution;
 import se.kth.sonar.decision.DecisionOutcome;
 import se.kth.sonar.decision.DecisionProblem;
 import se.kth.sonar.generate.Hypothesis;
@@ -43,11 +45,19 @@ public sealed interface TraceEvent {
    *
    * @param epoch the state it was built for
    * @param space the search space
+   * @param prior the prior over the regions, when the engine reports it
    */
-  record SpaceBuilt(int epoch, SearchSpace space) implements TraceEvent {
-    /** Checks the space. */
+  record SpaceBuilt(int epoch, SearchSpace space, Optional<Distribution<Region.Id>> prior)
+      implements TraceEvent {
+    /** Checks the components. */
     public SpaceBuilt {
       Objects.requireNonNull(space, "space");
+      Objects.requireNonNull(prior, "prior");
+    }
+
+    /** A space whose prior is not reported. */
+    public SpaceBuilt(int epoch, SearchSpace space) {
+      this(epoch, space, Optional.empty());
     }
   }
 

@@ -549,18 +549,21 @@ public final class RelationDsl {
 
     private Requirement requirement(DslLine line, RelationType relation) {
       DslLine.Cursor cursor = line.cursor();
-      String strengthToken = cursor.next("'hard' or 'soft'");
+      String strengthToken = cursor.next("'hard', 'soft' or 'convention'");
       Requirement.Strength strength =
           switch (strengthToken) {
             case "hard" -> Requirement.Strength.HARD;
             case "soft" -> Requirement.Strength.SOFT;
+            case "convention" -> Requirement.Strength.CONVENTION;
             default ->
-                throw line.error("expected 'hard' or 'soft' but found '" + strengthToken + "'");
+                throw line.error(
+                    "expected 'hard', 'soft' or 'convention' but found '" + strengthToken + "'");
           };
       String kind = cursor.next("constraint");
       Constraint constraint =
           switch (kind) {
             case "exists" -> new Constraint.Exists(checkedPath(line, relation, cursor));
+            case "absent" -> new Constraint.Absent(checkedPath(line, relation, cursor));
             case "distinct" -> new Constraint.Distinct(checkedPath(line, relation, cursor));
             case "resolves" -> {
               AttributePath path = path(line, cursor.next("path"));
@@ -699,8 +702,10 @@ public final class RelationDsl {
                   };
               if (parsed == DomainRule.Observation.DESTINATION) {
                 checkPrefixSlots(line, sorts);
-              } else if (sorts.size() != 1 || !(sorts.getFirst().lexeme() instanceof Lexeme.Name)) {
-                throw line.error("router names fill one name slot");
+              } else if (sorts.size() != 1
+                  || !(sorts.getFirst().lexeme() instanceof Lexeme.Name
+                      || sorts.getFirst().lexeme() instanceof Lexeme.Address)) {
+                throw line.error("routers fill one name slot or, by loopback, one address slot");
               }
               yield new DomainRule.Origin.Verifier(parsed);
             }
@@ -717,6 +722,10 @@ public final class RelationDsl {
                 throw line.error("literals fill one enumeration slot");
               }
               yield new DomainRule.Origin.Literals();
+            }
+            case "observed" -> {
+              cursor.expect("in");
+              yield new DomainRule.Origin.Observed(scope(line, cursor));
             }
             default -> throw line.error("unknown domain origin '" + kind + "'");
           };

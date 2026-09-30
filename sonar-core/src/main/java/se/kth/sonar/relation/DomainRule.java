@@ -22,7 +22,11 @@ public record DomainRule(Production production, List<String> slots, Origin origi
 
   /** Returns whether the rule draws on observed values or invents them. */
   public ValueSupport support() {
-    return origin instanceof Origin.Fresh ? ValueSupport.INVENTED : ValueSupport.OBSERVED;
+    return switch (origin) {
+      case Origin.Fresh _ -> ValueSupport.INVENTED;
+      case Origin.Verifier _, Origin.Related _ -> ValueSupport.EVIDENCED;
+      default -> ValueSupport.OBSERVED;
+    };
   }
 
   /** Which routers a rule draws values from, relative to the router being edited. */
@@ -79,5 +83,13 @@ public record DomainRule(Production production, List<String> slots, Origin origi
 
     /** Every literal of the slot's enumeration. */
     record Literals() implements Origin {}
+
+    /**
+     * The values the slot has in the statements of the same production, nearest router first; the
+     * default for a slot that no rule covers.
+     *
+     * @param scope how far from the edited router to look
+     */
+    record Observed(Scope scope) implements Origin {}
   }
 }

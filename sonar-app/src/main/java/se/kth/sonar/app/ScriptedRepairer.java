@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SequencedMap;
 import java.util.concurrent.CancellationException;
 import java.util.random.RandomGenerator;
 import se.kth.sonar.common.Distribution;
@@ -185,8 +186,14 @@ public final class ScriptedRepairer implements Repairer {
                             .map(specification -> specification.predicate().key())
                             .toList())),
                 new DecisionProblem.Context.Section("Regions", listing.toString().strip())));
+    SequencedMap<String, String> options = new LinkedHashMap<>();
+    regions.forEach(
+        region ->
+            options.put(
+                region.id().value(),
+                "edit " + region.routers().first().name() + ", " + region.bound() + " candidates"));
     DecisionProblem.RegionChoice question =
-        new DecisionProblem.RegionChoice(partition, regions, context);
+        new DecisionProblem.RegionChoice(partition, regions, options, context);
     Map<Region.Id, Double> weights = new LinkedHashMap<>();
     regions.forEach(region -> weights.put(region.id(), 0.05 + random.nextDouble()));
     RegionAssessment assessment =
@@ -274,7 +281,7 @@ public final class ScriptedRepairer implements Repairer {
       traces.put(
           specification.predicate(), List.of(new DataPlaneEvidence.Trace(hops, disposition)));
     }
-    return new DataPlaneEvidence(traces, Map.of());
+    return new DataPlaneEvidence(traces, Map.of(), Map.of());
   }
 
   private static List<RouterId> walk(

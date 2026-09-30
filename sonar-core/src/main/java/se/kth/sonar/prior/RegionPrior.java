@@ -1,8 +1,10 @@
 package se.kth.sonar.prior;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import se.kth.sonar.common.Distribution;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.SearchSpace;
@@ -18,6 +20,13 @@ public final class RegionPrior {
   /** Creates a prior from {@code factors}. */
   public RegionPrior(List<? extends PriorFactor> factors) {
     this.factors = List.copyOf(factors);
+  }
+
+  /** Returns this prior with one more factor. */
+  public RegionPrior with(PriorFactor factor) {
+    List<PriorFactor> extended = new ArrayList<>(factors);
+    extended.add(Objects.requireNonNull(factor, "factor"));
+    return new RegionPrior(extended);
   }
 
   /** Returns the prior over the regions of {@code space}, in region order. */

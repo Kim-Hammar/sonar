@@ -1,17 +1,54 @@
 package se.kth.sonar.engine;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import se.kth.sonar.belief.BeliefModel;
-import se.kth.sonar.common.NotImplemented;
-import se.kth.sonar.common.Placeholder;
+import se.kth.sonar.belief.BeliefState;
+import se.kth.sonar.common.ContentHash;
+import se.kth.sonar.common.Distribution;
+import se.kth.sonar.decision.DecisionOutcome;
+import se.kth.sonar.decision.DecisionProblem;
 import se.kth.sonar.decision.DecisionProblemFactory;
 import se.kth.sonar.decision.DecisionService;
+import se.kth.sonar.decision.HypothesisRanking;
+import se.kth.sonar.decision.RegionAssessment;
+import se.kth.sonar.execution.Budget;
+import se.kth.sonar.execution.Cancellation;
+import se.kth.sonar.execution.RunScope;
+import se.kth.sonar.generate.Hypothesis;
+import se.kth.sonar.network.Prefix;
+import se.kth.sonar.network.Snapshot;
+import se.kth.sonar.network.Transaction;
 import se.kth.sonar.policy.SearchPolicy;
+import se.kth.sonar.prior.ExperienceFactor;
 import se.kth.sonar.prior.RegionPrior;
+import se.kth.sonar.program.ProgramModel;
+import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.ProgramService;
 import se.kth.sonar.report.RepairResult;
+import se.kth.sonar.search.Partition;
+import se.kth.sonar.search.Region;
+import se.kth.sonar.search.RelationRegion;
+import se.kth.sonar.search.SearchSpace;
 import se.kth.sonar.search.SearchSpaceBuilder;
+import se.kth.sonar.search.SiteRegion;
+import se.kth.sonar.spec.Verdict;
 import se.kth.sonar.state.RepairProblem;
+import se.kth.sonar.state.RepairState;
+import se.kth.sonar.state.TransitionLedger;
+import se.kth.sonar.text.RouterId;
+import se.kth.sonar.trace.TraceEvent;
+import se.kth.sonar.trace.TraceSink;
+import se.kth.sonar.verify.DataPlaneEvidence;
+import se.kth.sonar.verify.Verification;
 import se.kth.sonar.verify.VerificationService;
 
 /**
@@ -19,13 +56,12 @@ import se.kth.sonar.verify.VerificationService;
  *
  * <p>The run verifies the faulty network, builds its program and search space, and then repeats:
  * the policy picks an action; assessments and rankings update the belief; candidates are verified
- * in batches whose results merge in candidate order; and improvements are adopted, after which the
- * stale regions are rebuilt. Every step is reported with {@link se.kth.sonar.trace.TraceSink#emit}
- * from the calling thread. The run stops when the network is repaired, the budget runs out, the run
- * scope's cancellation token is set, or the search space is empty.
+ * in batches whose results are recorded in candidate order; and improvements are adopted, after
+ * which the search space is refreshed and the belief starts again from the prior. Every step is
+ * reported with {@link TraceSink#emit} from the calling thread. The run stops when the network is
+ * repaired, the budget runs out, the run scope's cancellation token is set, or the search space is
+ * empty.
  */
-@Placeholder
-@SuppressWarnings("UnusedVariable")
 public final class RepairEngine implements Repairer {
   private final Components components;
 
@@ -35,7 +71,7 @@ public final class RepairEngine implements Repairer {
    * @param programs builds program models
    * @param verifier verifies candidates
    * @param spaces builds and refreshes search spaces
-   * @param prior the prior over regions
+   * @param prior the prior over regions, before what the run itself learns
    * @param problems builds decision questions
    * @param decisions asks the decision model
    * @param beliefs updates beliefs
@@ -74,6 +110,305 @@ public final class RepairEngine implements Repairer {
 
   @Override
   public RepairResult repair(RepairProblem problem) {
-    throw new NotImplemented("RepairEngine.repair");
+    Optional<RunScope> scope = RunScope.current();
+    Budget budget = scope.map(RunScope::budget).orElseGet(Budget::unlimited);
+    Cancellation cancellation = scope.map(RunScope::cancellation).orElseGet(Cancellation::new);
+    return new Run(problem, budget, cancellation).execute();
+  }
+
+  /** One repair run: the loop and the state it carries between steps. */
+  private final class Run {
+    private final RepairProblem problem;
+    private final Budget budget;
+    private final Cancellation cancellation;
+    private final TransitionLedger ledger = new TransitionLedger();
+    private final RegionPrior prior;
+    private final List<Transaction> adopted = new ArrayList<>();
+    private final Map<ProgramObject.Ref, Integer> nearMisses = new HashMap<>();
+    private final Map<RouterId, ContentHash> routerStates = new HashMap<>();
+    private RepairState state;
+    private SearchSpace space;
+    private BeliefState belief;
+
+    Run(RepairProblem problem, Budget budget, Cancellation cancellation) {
+      this.problem = problem;
+      this.budget = budget;
+      this.cancellation = cancellation;
+      this.prior = components.prior().with(new ExperienceFactor(ledger));
+    }
+
+    RepairResult execute() {
+      if (!affordable(problem.initial())) {
+        return failed("the budget allows no verification");
+      }
+      Verification baseline = verify(problem.initial());
+      TraceSink.emit(new TraceEvent.Baseline(baseline));
+      ProgramModel program = components.programs().model(problem.initial(), problem.topology());
+      state = RepairState.initial(problem, baseline, program);
+      space = components.spaces().build(state);
+      belief = components.beliefs().initial(prior.over(space, state), state.epoch());
+      TraceSink.emit(new TraceEvent.SpaceBuilt(state.epoch(), space, Optional.of(belief.prior())));
+      while (true) {
+        if (cancellation.isCancelled()) {
+          return result(new RepairResult.Stop.Cancelled());
+        }
+        SearchPolicy.Action action = components.policy().next(state, space, belief, budget);
+        Optional<RepairResult.Stop> stop =
+            switch (action) {
+              case SearchPolicy.Action.Stop s -> Optional.of(s.reason());
+              case SearchPolicy.Action.Assess a -> assess(a.partition());
+              case SearchPolicy.Action.Expand e -> expand(e.region());
+              case SearchPolicy.Action.Rank r -> rank(r.region());
+              case SearchPolicy.Action.Verify v -> verify(v.region(), v.hypotheses());
+            };
+        if (stop.isPresent()) {
+          return result(stop.get());
+        }
+      }
+    }
+
+    private Optional<RepairResult.Stop> assess(Partition.Id id) {
+      Partition partition =
+          space.partitions().stream().filter(p -> p.id().equals(id)).findFirst().orElseThrow();
+      DecisionProblem.RegionChoice question =
+          components
+              .problems()
+              .regionChoice(state, space, partition, ledger.triedIn(state.epoch()));
+      DecisionOutcome<RegionAssessment> outcome = components.decisions().assess(question);
+      TraceSink.emit(new TraceEvent.Decided(question, outcome));
+      belief =
+          switch (outcome) {
+            case DecisionOutcome.Answered<RegionAssessment> answered ->
+                components.beliefs().afterAssessment(belief, partition, answered.answer());
+            default -> components.beliefs().afterNeutralAssessment(belief, partition);
+          };
+      return Optional.empty();
+    }
+
+    private Optional<RepairResult.Stop> expand(Region.Id id) {
+      Region region = space.region(id).orElseThrow();
+      Region expanded = components.spaces().expand(region, state);
+      if (expanded.bound() == 0) {
+        remove(id);
+      } else {
+        space = space.replace(expanded);
+        belief = belief.withPrior(prior.over(space, state));
+      }
+      return Optional.empty();
+    }
+
+    private Optional<RepairResult.Stop> rank(Region.Id id) {
+      Region region = space.region(id).orElseThrow();
+      Region.Hypotheses.Admitted admitted = (Region.Hypotheses.Admitted) region.hypotheses();
+      DecisionProblem.HypothesisChoice question =
+          components.problems().hypothesisChoice(state, region, ledger.triedIn(state.epoch()));
+      DecisionOutcome<HypothesisRanking> outcome = components.decisions().rank(question);
+      TraceSink.emit(new TraceEvent.Decided(question, outcome));
+      Distribution<ContentHash> probabilities =
+          outcome instanceof DecisionOutcome.Answered<HypothesisRanking> answered
+              ? answered.answer().probabilities()
+              : Distribution.uniform(admitted.list().stream().map(Hypothesis::id).toList());
+      space = space.replace(region.withHypotheses(admitted.rankedBy(probabilities)));
+      return Optional.empty();
+    }
+
+    private Optional<RepairResult.Stop> verify(Region.Id id, List<ContentHash> ids) {
+      Region region = space.region(id).orElseThrow();
+      Region.Hypotheses.Admitted admitted = (Region.Hypotheses.Admitted) region.hypotheses();
+      if (admitted.list().isEmpty()) {
+        remove(id);
+        return Optional.empty();
+      }
+      Set<ContentHash> wanted = new LinkedHashSet<>(ids);
+      List<Hypothesis> batch = new ArrayList<>();
+      List<Snapshot> snapshots = new ArrayList<>();
+      Set<ContentHash> known = new LinkedHashSet<>();
+      for (Hypothesis hypothesis : admitted.list()) {
+        if (!wanted.contains(hypothesis.id())) {
+          continue;
+        }
+        if (ledger.tried(hypothesis, dependency(hypothesis))) {
+          known.add(hypothesis.id());
+          continue;
+        }
+        Snapshot snapshot = state.snapshot().patch(hypothesis.transaction()).after();
+        if (!affordable(snapshot)) {
+          break;
+        }
+        batch.add(hypothesis);
+        snapshots.add(snapshot);
+      }
+      if (batch.isEmpty() && !known.isEmpty()) {
+        Region.Hypotheses.Admitted remaining = admitted.without(known);
+        if (remaining.bound() == 0) {
+          remove(id);
+        } else {
+          space = space.replace(region.withHypotheses(remaining));
+        }
+        return Optional.empty();
+      }
+      if (batch.isEmpty()) {
+        return Optional.of(new RepairResult.Stop.BudgetExhausted(Budget.Resource.VERIFICATIONS));
+      }
+      List<Verification> verifications =
+          components.verifier().verifyAll(snapshots, problem.specifications());
+      List<Adoption.Verified> improvements = new ArrayList<>();
+      Set<ContentHash> tested = new LinkedHashSet<>();
+      for (int at = 0; at < batch.size(); at++) {
+        Hypothesis hypothesis = batch.get(at);
+        Verification verification = verifications.get(at);
+        Verdict.Change change = state.verification().verdict().changeTo(verification.verdict());
+        ledger.add(
+            new TransitionLedger.Transition(
+                state.epoch(), id, hypothesis, verification, change, dependency(hypothesis)));
+        TraceSink.emit(new TraceEvent.Tried(id, hypothesis, verification, change));
+        tested.add(hypothesis.id());
+        if (change == Verdict.Change.IMPROVEMENT) {
+          improvements.add(new Adoption.Verified(hypothesis, verification));
+        } else if (change == Verdict.Change.MIXED) {
+          for (ProgramObject.Ref object : objectsOf(region)) {
+            nearMisses.merge(object, 1, Integer::sum);
+          }
+        }
+      }
+      Optional<Adoption.Adopted> adoption =
+          improvements.isEmpty()
+              ? Optional.empty()
+              : components.adoption().adopt(state, improvements);
+      if (adoption.isPresent()) {
+        adopt(adoption.get());
+        return Optional.empty();
+      }
+      double testedMass =
+          admitted
+              .ranking()
+              .map(ranking -> ranking.mass(tested))
+              .orElse((double) tested.size() / admitted.bound());
+      belief = components.beliefs().afterFailures(belief, id, testedMass);
+      tested.addAll(known);
+      Region.Hypotheses.Admitted remaining = admitted.without(tested);
+      if (remaining.bound() == 0) {
+        remove(id);
+      } else {
+        space = space.replace(region.withHypotheses(remaining));
+      }
+      belief = components.beliefs().withNearMisses(belief, nearMissesByRegion());
+      return Optional.empty();
+    }
+
+    private void adopt(Adoption.Adopted adoption) {
+      ProgramModel program =
+          components
+              .programs()
+              .model(adoption.snapshot(), problem.topology(), Optional.of(state.program()));
+      state = state.advance(adoption.snapshot(), adoption.verification(), program);
+      routerStates.clear();
+      adoption.hypotheses().forEach(hypothesis -> adopted.add(hypothesis.transaction()));
+      TraceSink.emit(
+          new TraceEvent.Adopted(state.epoch(), adoption.hypotheses(), adoption.verification()));
+      nearMisses.clear();
+      if (state.solved()) {
+        return;
+      }
+      space = components.spaces().refresh(space, state);
+      belief = components.beliefs().initial(prior.over(space, state), state.epoch());
+      TraceSink.emit(new TraceEvent.SpaceBuilt(state.epoch(), space, Optional.of(belief.prior())));
+    }
+
+    private void remove(Region.Id id) {
+      space = space.without(List.of(id));
+      if (!space.isEmpty()) {
+        belief = belief.without(List.of(id));
+      }
+    }
+
+    private Map<Region.Id, Integer> nearMissesByRegion() {
+      Map<Region.Id, Integer> counts = new LinkedHashMap<>();
+      if (nearMisses.isEmpty()) {
+        return counts;
+      }
+      for (Region region : space.regions()) {
+        int count = 0;
+        for (ProgramObject.Ref object : objectsOf(region)) {
+          count = Math.max(count, nearMisses.getOrDefault(object, 0));
+        }
+        if (count > 0) {
+          counts.put(region.id(), count);
+        }
+      }
+      return counts;
+    }
+
+    private static Set<ProgramObject.Ref> objectsOf(Region region) {
+      return switch (region) {
+        case SiteRegion site -> Set.of(site.site());
+        case RelationRegion relation -> Set.copyOf(relation.instance().roles().values());
+      };
+    }
+
+    /**
+     * Returns a digest of what verifying {@code hypothesis} depends on in the current state: the
+     * text of the routers it changes and, for every specified destination, whether each of them
+     * forwards to it or holds a BGP route to it. A candidate verified under the same digest before
+     * would give the same verdict again.
+     */
+    private ContentHash dependency(Hypothesis hypothesis) {
+      ContentHash.Builder digest = ContentHash.builder();
+      for (RouterId router : hypothesis.routers()) {
+        digest.add(router.name()).add(routerState(router));
+      }
+      return digest.build();
+    }
+
+    private ContentHash routerState(RouterId router) {
+      return routerStates.computeIfAbsent(
+          router,
+          r -> {
+            ContentHash.Builder digest =
+                ContentHash.builder().add(state.snapshot().text(r).digest());
+            DataPlaneEvidence evidence = state.verification().evidence();
+            for (Prefix destination : new TreeSet<>(evidence.forwarders().keySet())) {
+              if (evidence.forwarders().get(destination).contains(r)) {
+                digest.add("forwards " + destination);
+              }
+            }
+            for (Prefix destination : new TreeSet<>(evidence.routeHolders().keySet())) {
+              if (evidence.routeHolders().get(destination).contains(r)) {
+                digest.add("holds " + destination);
+              }
+            }
+            return digest.build();
+          });
+    }
+
+    /** Charges one verification for {@code snapshot} unless its result is known already. */
+    private boolean affordable(Snapshot snapshot) {
+      return components.verifier().cached(snapshot, problem.specifications()).isPresent()
+          || budget.tryConsume(Budget.Resource.VERIFICATIONS, 1);
+    }
+
+    private Verification verify(Snapshot snapshot) {
+      return components.verifier().verify(snapshot, problem.specifications());
+    }
+
+    private RepairResult result(RepairResult.Stop stop) {
+      return new RepairResult(
+          problem.name(),
+          state.snapshot(),
+          state.verification().verdict(),
+          adopted,
+          stop,
+          budget.usage());
+    }
+
+    private RepairResult failed(String reason) {
+      return new RepairResult(
+          problem.name(),
+          problem.initial(),
+          new Verdict(problem.specifications().broken(), List.of(), List.of()),
+          List.of(),
+          new RepairResult.Stop.Failed(reason),
+          budget.usage());
+    }
   }
 }

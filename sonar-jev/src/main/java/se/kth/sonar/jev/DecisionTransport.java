@@ -30,11 +30,17 @@ public interface DecisionTransport {
    *
    * @param status the HTTP status code
    * @param body the JSON body
+   * @param cached whether the reply was stored earlier instead of coming from the provider now
    */
-  record Reply(int status, String body) {
+  record Reply(int status, String body, boolean cached) {
     /** Checks the body. */
     public Reply {
       Objects.requireNonNull(body, "body");
+    }
+
+    /** A reply from the provider. */
+    public Reply(int status, String body) {
+      this(status, body, false);
     }
   }
 }

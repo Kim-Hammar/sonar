@@ -6,7 +6,6 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import se.kth.sonar.batfish.BatfishEngine;
-import se.kth.sonar.batfish.BatfishProgramFactory;
 import se.kth.sonar.belief.BeliefModel;
 import se.kth.sonar.dataset.ScenarioRepository;
 import se.kth.sonar.decision.DecisionModel;
@@ -30,10 +29,12 @@ import se.kth.sonar.jev.HttpTransport;
 import se.kth.sonar.jev.JevDecisionModel;
 import se.kth.sonar.jev.JevRequestCodec;
 import se.kth.sonar.policy.GreedyPolicy;
-import se.kth.sonar.prior.ExperienceFactor;
+import se.kth.sonar.prior.DropFactor;
+import se.kth.sonar.prior.FrontierFactor;
 import se.kth.sonar.prior.RegionPrior;
 import se.kth.sonar.prior.RelationFactor;
 import se.kth.sonar.prior.SpectrumFactor;
+import se.kth.sonar.program.CiscoIosSemantics;
 import se.kth.sonar.program.ProgramService;
 import se.kth.sonar.relation.Dialect;
 import se.kth.sonar.search.SearchSpace;
@@ -110,7 +111,8 @@ public final class Pipeline implements AutoCloseable {
             () ->
                 new JevDecisionModel(
                     new CachingTransport(new HttpTransport(decisions), workspace.decisionCache()),
-                    new JevRequestCodec()),
+                    new JevRequestCodec(decisions.model()),
+                    PAYLOAD_LIMIT),
             model -> {});
     this.repairer =
         switch (agent) {
@@ -164,23 +166,29 @@ public final class Pipeline implements AutoCloseable {
   }
 
   private RepairEngine.Components components(Dialect dialect) {
-    ProgramService programs = new ProgramService(dialect, new BatfishProgramFactory(), context);
+    ProgramService programs = new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
     VerificationService verifier = new VerificationService(engines, context);
     Bounds bounds = Bounds.defaults();
+    SeedGenerator seeds =
+        new SeedGenerator(dialect.schema(), new ValueDomains(dialect.schema(), bounds), bounds);
     SearchSpaceBuilder spaces =
         new SearchSpaceBuilder(
-            new SeedGenerator(
-                dialect.grammar(), new ValueDomains(dialect.schema(), bounds), bounds),
-            new ClosureEngine(dialect.schema(), bounds),
-            new Admissibility(programs),
+            seeds,
+            new ClosureEngine(programs, seeds, bounds),
+            new Admissibility(programs, context),
             new SearchSpace.Capacity(PARTITION_REGIONS, PARTITION_HYPOTHESES),
+            bounds,
             context);
     return new RepairEngine.Components(
         programs,
         verifier,
         spaces,
         new RegionPrior(
-            List.of(new SpectrumFactor(), new RelationFactor(), new ExperienceFactor())),
+            List.of(
+                new SpectrumFactor(),
+                new RelationFactor(programs.evaluator()),
+                new FrontierFactor(),
+                new DropFactor())),
         new DecisionProblemFactory(PAYLOAD_LIMIT),
         new DecisionService(models, context),
         new BeliefModel(),

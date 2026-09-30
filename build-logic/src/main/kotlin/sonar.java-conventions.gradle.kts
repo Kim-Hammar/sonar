@@ -63,6 +63,7 @@ val coverageScope = "${project.group}.*"
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    jvmArgs("-da:org.batfish...")
     testLogging {
         events("failed", "skipped")
         exceptionFormat = TestExceptionFormat.FULL

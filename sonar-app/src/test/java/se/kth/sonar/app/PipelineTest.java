@@ -29,26 +29,30 @@ class PipelineTest {
   }
 
   @Test
-  void theEngineStopsAtItsFirstPlaceholder() {
+  void theEngineSearchesWithinItsBudget() {
     TestDataset.create(dataset, 1);
     List<TraceRecord> records = new CopyOnWriteArrayList<>();
     Pipeline pipeline =
         Pipeline.open(
             new Workspace(dataset, output),
-            settings(Map.of()),
+            settings(Map.of(Budget.Resource.VERIFICATIONS, 3L, Budget.Resource.DECISIONS, 0L)),
             new Pipeline.Agent.Engine(HttpTransport.Settings.openRouter()));
     try (pipeline) {
       assertThat(pipeline.scenarios().scenarios()).containsExactly("scenario-001");
       List<BenchmarkRunner.Outcome> outcomes =
           pipeline.run(List.of("scenario-001"), new Cancellation(), records::add);
-      assertThat(outcomes)
-          .containsExactly(
-              new BenchmarkRunner.Outcome.Failed(
-                  "scenario-001", "RepairEngine.repair is not implemented yet"));
+      assertThat(outcomes).hasSize(1);
+      assertThat(outcomes.getFirst()).isInstanceOf(BenchmarkRunner.Outcome.Completed.class);
+      RepairResult result = ((BenchmarkRunner.Outcome.Completed) outcomes.getFirst()).result();
+      assertThat(result.stop())
+          .isEqualTo(new RepairResult.Stop.BudgetExhausted(Budget.Resource.VERIFICATIONS));
+      assertThat(result.usage()).containsEntry(Budget.Resource.VERIFICATIONS, 3L);
     }
     assertThat(records)
         .extracting(record -> record.event().getClass().getSimpleName())
-        .containsExactly("Loaded", "Failed");
+        .startsWith("Loaded", "Baseline", "SpaceBuilt")
+        .contains("Tried")
+        .endsWith("Finished");
     pipeline.close();
     assertThatThrownBy(
             () -> pipeline.run(List.of("scenario-001"), new Cancellation(), record -> {}))

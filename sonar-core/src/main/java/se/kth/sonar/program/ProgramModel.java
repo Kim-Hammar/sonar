@@ -1,62 +1,77 @@
 package se.kth.sonar.program;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SequencedMap;
 import java.util.Set;
-import se.kth.sonar.common.ContentHash;
+import se.kth.sonar.grammar.Production;
 import se.kth.sonar.grammar.Statement;
+import se.kth.sonar.grammar.Symbol;
 import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.network.Topology;
 import se.kth.sonar.relation.RelationSchema;
-import se.kth.sonar.text.ConfigText;
 import se.kth.sonar.text.RouterId;
+import se.kth.sonar.text.SourceSpan;
 
 /** The program of one snapshot: its statements, typed objects, and relation instances. */
 public final class ProgramModel {
   private final Snapshot snapshot;
+  private final Topology topology;
   private final RelationSchema schema;
   private final Map<RouterId, List<Statement>> statements;
-  private final Map<String, List<ProgramObject>> objectsByType;
-  private final Map<ProgramObject.Ref, ProgramObject> objectsByRef;
+  private final ObjectIndex index;
   private final List<RelationInstance> instances;
+  private final List<SourceSpan> dangling;
 
   /** Creates a model; {@link ProgramService} is the usual way to build one. */
   public ProgramModel(
       Snapshot snapshot,
+      Topology topology,
       RelationSchema schema,
       Map<RouterId, List<Statement>> statements,
       Collection<ProgramObject> objects,
-      List<RelationInstance> instances) {
+      List<RelationInstance> instances,
+      List<SourceSpan> dangling) {
+    this(snapshot, topology, schema, statements, new ObjectIndex(objects), instances, dangling);
+  }
+
+  ProgramModel(
+      Snapshot snapshot,
+      Topology topology,
+      RelationSchema schema,
+      Map<RouterId, List<Statement>> statements,
+      ObjectIndex index,
+      List<RelationInstance> instances,
+      List<SourceSpan> dangling) {
     this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
+    this.topology = Objects.requireNonNull(topology, "topology");
     this.schema = Objects.requireNonNull(schema, "schema");
-    Map<RouterId, List<Statement>> statementCopy = new LinkedHashMap<>();
-    statements.forEach((router, list) -> statementCopy.put(router, List.copyOf(list)));
-    this.statements = Collections.unmodifiableMap(statementCopy);
-    Map<String, List<ProgramObject>> byType = new LinkedHashMap<>();
-    Map<ProgramObject.Ref, ProgramObject> byRef = new HashMap<>();
-    for (ProgramObject object : objects) {
-      byType.computeIfAbsent(object.ref().type(), type -> new ArrayList<>()).add(object);
-      if (byRef.put(object.ref(), object) != null) {
-        throw new IllegalArgumentException("duplicate object " + object.ref());
-      }
-    }
-    Map<String, List<ProgramObject>> frozen = new LinkedHashMap<>();
-    byType.forEach((type, list) -> frozen.put(type, List.copyOf(list)));
-    this.objectsByType = Collections.unmodifiableMap(frozen);
-    this.objectsByRef = Collections.unmodifiableMap(byRef);
+    this.statements = Collections.unmodifiableMap(new LinkedHashMap<>(statements));
+    this.index = index;
     this.instances = List.copyOf(instances);
+    this.dangling = List.copyOf(dangling);
+  }
+
+  /** Returns the index of the model's objects. */
+  ObjectIndex index() {
+    return index;
   }
 
   /** Returns the snapshot the model describes. */
   public Snapshot snapshot() {
     return snapshot;
+  }
+
+  /** Returns the topology the snapshot is deployed in. */
+  public Topology topology() {
+    return topology;
   }
 
   /** Returns the schema that typed the objects. */
@@ -71,12 +86,22 @@ public final class ProgramModel {
 
   /** Returns the objects of type {@code type}. */
   public List<ProgramObject> objects(String type) {
-    return objectsByType.getOrDefault(type, List.of());
+    return index.ofType(type);
+  }
+
+  /** Returns every object, in router and line order. */
+  public List<ProgramObject> objects() {
+    return index.all();
+  }
+
+  /** Returns the objects of {@code router}, its own object first. */
+  public List<ProgramObject> objectsOf(RouterId router) {
+    return index.ofRouter(router);
   }
 
   /** Returns the object identified by {@code ref}. */
   public Optional<ProgramObject> object(ProgramObject.Ref ref) {
-    return Optional.ofNullable(objectsByRef.get(ref));
+    return Optional.ofNullable(index.get(ref));
   }
 
   /** Returns every relation instance. */
@@ -95,33 +120,118 @@ public final class ProgramModel {
   }
 
   /**
-   * Computes what needs the semantics of the configuration language: facts per router and the
-   * values of derived attributes. The Batfish adapter implements it.
+   * Returns the objects on {@code routers} whose attributes differ between {@code before} and
+   * {@code after}, including objects only one of them has.
+   */
+  public static Set<ProgramObject.Ref> changedObjects(
+      ProgramModel before, ProgramModel after, Collection<RouterId> routers) {
+    Set<ProgramObject.Ref> changed = new LinkedHashSet<>();
+    for (RouterId router : new LinkedHashSet<>(routers)) {
+      Map<ProgramObject.Ref, ProgramObject> earlier = new HashMap<>();
+      before.objectsOf(router).forEach(object -> earlier.put(object.ref(), object));
+      for (ProgramObject object : after.objectsOf(router)) {
+        ProgramObject old = earlier.remove(object.ref());
+        if (old == null || !old.attributes().equals(object.attributes())) {
+          changed.add(object.ref());
+        }
+      }
+      changed.addAll(earlier.keySet());
+    }
+    return changed;
+  }
+
+  /** Returns the statements that name an object which does not exist, in router and line order. */
+  public List<SourceSpan> dangling() {
+    return dangling;
+  }
+
+  /**
+   * Computes what needs the semantics of the configuration language: the values of derived
+   * attributes, and how to realise a wanted value of a derived attribute in configuration text.
+   * Implementations are safe to call from several threads.
    */
   public interface Factory {
     /** Returns the names of the derived-attribute functions this factory computes. */
     Set<String> functions();
 
     /**
-     * Parses one configuration. The result depends only on the text, so callers cache it by digest.
-     * Implementations are safe to call from several threads.
-     */
-    RouterFacts parse(RouterId router, ConfigText text);
-
-    /**
      * Computes the derived attributes of {@code objects}, keyed by object and then by attribute,
-     * from the facts of every router.
+     * from the statements of every router and the topology. A reference to an object on another
+     * router is written as that object's {@link ProgramObject.Ref#toString() reference text}.
      */
     Map<ProgramObject.Ref, Map<String, List<String>>> derive(
-        Topology topology, Map<RouterId, RouterFacts> facts, List<ProgramObject> objects);
+        Topology topology, Map<RouterId, List<Statement>> statements, List<ProgramObject> objects);
+
+    /**
+     * Returns the ways to give the derived attribute computed by {@code function} the value {@code
+     * target} on {@code object}: each is a statement to insert into the object's block, or to
+     * replace an existing statement of the same production with. An empty list means the value
+     * cannot be realised by editing the object.
+     */
+    List<Realisation> realise(
+        String function, String target, ProgramObject object, ProgramModel program);
   }
 
-  /** What a factory learned from one configuration. */
-  public interface RouterFacts {
-    /** Returns the router. */
-    RouterId router();
+  /**
+   * A statement that realises a wanted derived value.
+   *
+   * @param production the production of the statement
+   * @param values the values of the slots the realisation fixes; the others are left to the slots'
+   *     domains
+   * @param holder the object whose statements the realisation edits, when it is not the object that
+   *     carries the derived attribute, as when a value is inherited from another object
+   * @param statement the one existing statement to change, when the value is realised by changing a
+   *     particular statement rather than any statement of the production
+   */
+  public record Realisation(
+      Production production,
+      Map<String, List<String>> values,
+      Optional<ProgramObject.Ref> holder,
+      Optional<SourceSpan> statement) {
+    /** Copies the values and checks that each belongs to its slot's sort. */
+    public Realisation {
+      Objects.requireNonNull(production, "production");
+      Objects.requireNonNull(holder, "holder");
+      Objects.requireNonNull(statement, "statement");
+      SequencedMap<String, List<String>> copy = new LinkedHashMap<>();
+      values.forEach(
+          (slot, tokens) -> {
+            Symbol.Slot declared =
+                production
+                    .slot(slot)
+                    .orElseThrow(
+                        () ->
+                            new IllegalArgumentException(
+                                "production " + production.id() + " has no slot " + slot));
+            for (String token : tokens) {
+              if (!declared.accepts(token)) {
+                throw new IllegalArgumentException(
+                    "'" + token + "' is not a " + declared.sort().name() + " for " + slot);
+              }
+            }
+            copy.put(slot, List.copyOf(tokens));
+          });
+      values = Collections.unmodifiableSequencedMap(copy);
+    }
 
-    /** Returns the digest of the configuration text the facts were parsed from. */
-    ContentHash source();
+    /** A realisation that edits the object itself. */
+    public Realisation(Production production, Map<String, List<String>> values) {
+      this(production, values, Optional.empty(), Optional.empty());
+    }
+
+    /** A realisation that edits {@code holder}'s statements. */
+    public Realisation(
+        Production production, Map<String, List<String>> values, ProgramObject.Ref holder) {
+      this(production, values, Optional.of(holder), Optional.empty());
+    }
+
+    /** A realisation that changes the statement at {@code statement} of {@code holder}. */
+    public Realisation(
+        Production production,
+        Map<String, List<String>> values,
+        ProgramObject.Ref holder,
+        SourceSpan statement) {
+      this(production, values, Optional.of(holder), Optional.of(statement));
+    }
   }
 }

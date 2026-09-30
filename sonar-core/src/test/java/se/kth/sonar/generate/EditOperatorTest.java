@@ -32,8 +32,8 @@ class EditOperatorTest {
 
   @Test
   void replacingASlotKeepsTheIndentationAndTheOtherValues() {
-    EditOperator.ReplaceSlot operator =
-        new EditOperator.ReplaceSlot(
+    EditOperator.ReplaceSlots operator =
+        new EditOperator.ReplaceSlots(
             statement(2, "interface", " ", "ip ospf 1 area 0"),
             "area",
             List.of("7"),
@@ -48,17 +48,20 @@ class EditOperatorTest {
     Statement cost = statement(2, "interface", " ", "ip ospf cost 10");
     assertThatThrownBy(
             () ->
-                new EditOperator.ReplaceSlot(cost, "cost", List.of("0"), new Provenance.Existing()))
+                new EditOperator.ReplaceSlots(
+                    cost, "cost", List.of("0"), new Provenance.Existing()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
-                new EditOperator.ReplaceSlot(cost, "area", List.of("1"), new Provenance.Existing()))
+                new EditOperator.ReplaceSlots(
+                    cost, "area", List.of("1"), new Provenance.Existing()))
         .isInstanceOf(IllegalArgumentException.class);
     Statement unknown = statement(3, "interface", " ", "carrier-delay 10");
     assertThat(unknown.matched()).isFalse();
     assertThatThrownBy(
             () ->
-                new EditOperator.ReplaceSlot(unknown, "x", List.of("1"), new Provenance.Existing()))
+                new EditOperator.ReplaceSlots(
+                    unknown, "x", List.of("1"), new Provenance.Existing()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -107,13 +110,13 @@ class EditOperatorTest {
         Hypothesis.of(
             base,
             List.of(
-                new EditOperator.ReplaceSlot(
+                new EditOperator.ReplaceSlots(
                     cost, "cost", List.of("20"), new Provenance.Existing())));
     Hypothesis invented =
         Hypothesis.of(
             base,
             List.of(
-                new EditOperator.ReplaceSlot(
+                new EditOperator.ReplaceSlots(
                     cost, "cost", List.of("30"), new Provenance.Domain(fresh))));
     assertThat(observed.support()).isEqualTo(ValueSupport.OBSERVED);
     assertThat(invented.support()).isEqualTo(ValueSupport.INVENTED);

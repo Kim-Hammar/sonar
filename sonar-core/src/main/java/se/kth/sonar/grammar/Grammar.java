@@ -10,9 +10,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Pattern;
-import se.kth.sonar.common.NotImplemented;
 import se.kth.sonar.text.ConfigText;
 import se.kth.sonar.text.RouterId;
+import se.kth.sonar.text.SourceSpan;
 
 /**
  * The syntax of a configuration dialect: value sorts, a tree of contexts, and the productions
@@ -165,8 +165,47 @@ public final class Grammar {
    * without a match, so that repairs can still delete or replace it.
    */
   public List<Statement> parse(RouterId router, ConfigText text) {
-    throw new NotImplemented("Grammar.parse");
+    List<Open> open = new ArrayList<>();
+    open.add(new Open(root(), 0));
+    List<Statement> statements = new ArrayList<>();
+    for (int number = 1; number <= text.lineCount(); number++) {
+      String raw = text.line(number);
+      if (isTrivia(raw)) {
+        continue;
+      }
+      String body = raw.strip();
+      String indentation = raw.substring(0, raw.length() - raw.stripLeading().length());
+      List<String> tokens = tokens(body);
+      Optional<Production.Match> found = Optional.empty();
+      for (int depth = open.size() - 1; depth >= 0 && found.isEmpty(); depth--) {
+        List<Production.Match> matches = match(open.get(depth).context(), tokens);
+        if (!matches.isEmpty()) {
+          found = Optional.of(matches.getFirst());
+          open.subList(depth + 1, open.size()).clear();
+        }
+      }
+      Open innermost = open.getLast();
+      statements.add(
+          new Statement(
+              SourceSpan.line(router, number),
+              innermost.context(),
+              innermost.line(),
+              indentation,
+              body,
+              found));
+      if (found.isPresent()) {
+        Production production = found.get().production();
+        if (production.opens().isPresent()) {
+          open.add(new Open(production.opens().get(), number));
+        } else if (production.closes() && open.size() > 1) {
+          open.removeLast();
+        }
+      }
+    }
+    return Collections.unmodifiableList(statements);
   }
+
+  private record Open(Context context, int line) {}
 
   @Override
   public String toString() {

@@ -1,7 +1,9 @@
 package se.kth.sonar.verify;
 
+import java.util.List;
 import java.util.Objects;
 import se.kth.sonar.common.ContentHash;
+import se.kth.sonar.spec.Specification;
 import se.kth.sonar.spec.Verdict;
 
 /**
@@ -17,5 +19,16 @@ public record Verification(ContentHash snapshot, Verdict verdict, DataPlaneEvide
     Objects.requireNonNull(snapshot, "snapshot");
     Objects.requireNonNull(verdict, "verdict");
     Objects.requireNonNull(evidence, "evidence");
+  }
+
+  /** Returns a digest of the snapshot and the verdict, for caching what depends on both. */
+  public ContentHash digest() {
+    ContentHash.Builder digest = ContentHash.builder().add(snapshot);
+    for (List<Specification> group :
+        List.of(verdict.unresolved(), verdict.fixed(), verdict.sideEffects())) {
+      digest.add(group.size());
+      group.forEach(specification -> digest.add(specification.predicate().key()));
+    }
+    return digest.build();
   }
 }

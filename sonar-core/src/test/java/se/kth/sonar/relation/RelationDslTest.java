@@ -92,7 +92,7 @@ class RelationDslTest {
     assertThat(schema.derivedFunctions()).containsExactly("address-owner");
     assertThat(schema.domains())
         .extracting(DomainRule::support)
-        .containsExactly(ValueSupport.OBSERVED, ValueSupport.OBSERVED, ValueSupport.INVENTED);
+        .containsExactly(ValueSupport.EVIDENCED, ValueSupport.OBSERVED, ValueSupport.INVENTED);
     assertThat(schema.domains(GRAMMAR.production("route-map").orElseThrow())).hasSize(1);
   }
 

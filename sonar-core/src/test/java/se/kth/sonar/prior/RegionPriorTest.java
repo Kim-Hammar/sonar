@@ -49,7 +49,13 @@ class RegionPriorTest {
             DataPlaneEvidence.none());
     ProgramModel program =
         new ProgramModel(
-            snapshot, Dialect.load("cisco-ios").schema(), Map.of(), List.of(), List.of());
+            snapshot,
+            problem.topology(),
+            Dialect.load("cisco-ios").schema(),
+            Map.of(),
+            List.of(),
+            List.of(),
+            List.of());
     return RepairState.initial(problem, verification, program);
   }
 

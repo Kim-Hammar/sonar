@@ -40,17 +40,33 @@ public sealed interface Provenance {
    *
    * @param relation the relation's name
    * @param requirement the requirement
+   * @param support whether the values were observed or invented
    */
-  record Forced(String relation, Requirement requirement) implements Provenance {
+  record Forced(String relation, Requirement requirement, ValueSupport support)
+      implements Provenance {
     /** Checks the components. */
     public Forced {
       Objects.requireNonNull(relation, "relation");
       Objects.requireNonNull(requirement, "requirement");
+      Objects.requireNonNull(support, "support");
     }
 
-    @Override
-    public ValueSupport support() {
-      return ValueSupport.OBSERVED;
+    /** Forces observed values. */
+    public Forced(String relation, Requirement requirement) {
+      this(relation, requirement, ValueSupport.OBSERVED);
+    }
+
+    /** Returns the requirement without the support of the values. */
+    public Restored restored() {
+      return new Restored(relation, requirement);
     }
   }
+
+  /**
+   * A requirement of a relation that a candidate restores.
+   *
+   * @param relation the relation's name
+   * @param requirement the requirement
+   */
+  record Restored(String relation, Requirement requirement) {}
 }

@@ -1,28 +1,31 @@
 package se.kth.sonar.decision;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Future;
-import se.kth.sonar.common.NotImplemented;
-import se.kth.sonar.common.Placeholder;
+import java.util.function.Function;
+import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.ContentCache;
 import se.kth.sonar.execution.ExecutionContext;
 import se.kth.sonar.execution.ResourcePool;
+import se.kth.sonar.execution.RunScope;
 
 /**
  * Asks the decision model questions concurrently and within budget.
  *
- * <p>Models are leased from a pool. Answers are cached by scenario and problem key, so identical
- * questions of a scenario share one request, and a scenario's answers are released when the
- * scenario ends. Decisions, provider calls and tokens are charged on the orchestrating thread when
- * the search uses an answer, so parallel runs charge exactly what sequential runs do; questions
- * asked ahead of need with {@link #prefetch} are charged to the speculative counters until then.
+ * <p>Models are leased from a pool. Answers are cached by problem key, so identical questions share
+ * one request and an answer asked for ahead of time is found when it is needed. A decision is
+ * charged to the run's budget when the search asks for it, and the provider calls and tokens the
+ * answer took are charged when the provider is actually called, so cached answers cost no tokens
+ * and parallel runs charge exactly what sequential runs do; questions asked ahead of need with
+ * {@link #prefetch} are charged to the speculative counter instead.
  */
-@Placeholder
-@SuppressWarnings("UnusedVariable")
 public final class DecisionService {
+  private static final int CACHE_CAPACITY = 4096;
+
   private final ResourcePool<DecisionModel> models;
   private final ExecutionContext context;
-  private final ContentCache<DecisionOutcome<?>> answers = new ContentCache<>();
+  private final ContentCache<DecisionOutcome<?>> answers = new ContentCache<>(CACHE_CAPACITY);
 
   /** Creates a service that leases models from {@code models} and runs on {@code context}. */
   public DecisionService(ResourcePool<DecisionModel> models, ExecutionContext context) {
@@ -32,16 +35,58 @@ public final class DecisionService {
 
   /** Asks which region of a partition holds the repair. */
   public DecisionOutcome<RegionAssessment> assess(DecisionProblem.RegionChoice problem) {
-    throw new NotImplemented("DecisionService.assess");
+    return ask(problem, Budget.Resource.DECISIONS, model -> model.assess(problem));
   }
 
   /** Asks how to order the candidates of a region. */
   public DecisionOutcome<HypothesisRanking> rank(DecisionProblem.HypothesisChoice problem) {
-    throw new NotImplemented("DecisionService.rank");
+    return ask(problem, Budget.Resource.DECISIONS, model -> model.rank(problem));
   }
 
   /** Starts asking {@code problem} on a virtual thread while the caller continues. */
   public Future<DecisionOutcome<RegionAssessment>> prefetch(DecisionProblem.RegionChoice problem) {
-    throw new NotImplemented("DecisionService.prefetch");
+    return context.async(
+        () -> ask(problem, Budget.Resource.SPECULATIVE_DECISIONS, model -> model.assess(problem)));
+  }
+
+  private <T> DecisionOutcome<T> ask(
+      DecisionProblem problem,
+      Budget.Resource counter,
+      Function<DecisionModel, DecisionOutcome<T>> question) {
+    Optional<Budget> budget = RunScope.current().map(RunScope::budget);
+    if (budget.isPresent() && !budget.get().tryConsume(counter, 1)) {
+      return new DecisionOutcome.Stopped<>(counter);
+    }
+    @SuppressWarnings("unchecked")
+    DecisionOutcome<T> outcome =
+        (DecisionOutcome<T>) answers.get(problem.key(), () -> compute(question, budget));
+    return outcome;
+  }
+
+  private <T> DecisionOutcome<T> compute(
+      Function<DecisionModel, DecisionOutcome<T>> question, Optional<Budget> budget) {
+    ResourcePool<DecisionModel>.Lease lease;
+    try {
+      lease = models.lease();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("interrupted while waiting for a decision model", e);
+    }
+    DecisionOutcome<T> outcome;
+    try (lease) {
+      try {
+        outcome = question.apply(lease.resource());
+      } catch (RuntimeException | Error failure) {
+        lease.invalidate();
+        throw failure;
+      }
+    }
+    if (budget.isPresent()) {
+      DecisionOutcome.Usage usage = outcome.usage();
+      budget.get().charge(Budget.Resource.PROVIDER_CALLS, usage.providerCalls());
+      budget.get().charge(Budget.Resource.INPUT_TOKENS, usage.inputTokens());
+      budget.get().charge(Budget.Resource.OUTPUT_TOKENS, usage.outputTokens());
+    }
+    return outcome;
   }
 }

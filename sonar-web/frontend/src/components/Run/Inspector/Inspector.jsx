@@ -120,8 +120,43 @@ function Decision({ detail }) {
           ]}
         />
       )}
-      {answer && answer.order && <KeyList keys={answer.order} />}
+      {answer && answer.order && (
+        <DataTable
+          rows={answer.order}
+          rowKey={(row) => row.id}
+          columns={[
+            {
+              id: 'id',
+              header: 'Candidate',
+              hint: hints.candidate,
+              cell: (row) => <span className="mono">{row.id.slice(0, 12)}</span>
+            },
+            {
+              id: 'p',
+              header: 'Probability',
+              hint: hints.rankProbability,
+              align: 'right',
+              cell: (row) => row.probability.toFixed(3)
+            }
+          ]}
+        />
+      )}
       {!answer && <Alert tone="warn">{detail.reason}</Alert>}
+      <Heading hint={hints.options}>Options</Heading>
+      <Disclosure title="Options offered" meta={`${detail.options.length} options`}>
+        <DataTable
+          rows={detail.options}
+          rowKey={(row) => row.id}
+          columns={[
+            {
+              id: 'id',
+              header: 'Option',
+              cell: (row) => <span className="mono">{row.id}</span>
+            },
+            { id: 'description', header: 'Description', cell: (row) => row.description }
+          ]}
+        />
+      </Disclosure>
       <Heading hint={hints.context}>Context</Heading>
       {detail.context.map((section) => (
         <Disclosure
