@@ -70,7 +70,7 @@ public final class RelationFactor implements PriorFactor {
         }
       }
     }
-    if (region instanceof IncidenceRegion) {
+    if (region instanceof IncidenceRegion || region instanceof se.kth.sonar.search.MeshRegion) {
       Requirement missingPeer =
           new Requirement(
               Requirement.Strength.SOFT,

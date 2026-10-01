@@ -24,7 +24,8 @@ import se.kth.sonar.text.RouterId;
  * <p>A region is immutable. Its hypotheses are generated only when the search needs them, and the
  * expanded region replaces the deferred one in the search space.
  */
-public sealed interface Region permits SiteRegion, RelationRegion, IncidenceRegion, TransferRegion {
+public sealed interface Region
+    permits SiteRegion, RelationRegion, IncidenceRegion, MeshRegion, TransferRegion {
   /** Returns the region's identifier, unique within a search space. */
   Id id();
 

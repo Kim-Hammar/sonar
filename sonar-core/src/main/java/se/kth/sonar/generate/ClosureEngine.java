@@ -90,8 +90,6 @@ public final class ClosureEngine {
     } catch (IllegalArgumentException | IllegalStateException inapplicable) {
       return List.of();
     }
-    Set<Requirement> targeted = new HashSet<>();
-    obligations.forEach(o -> targeted.add(o.requirement()));
     Set<Key> baseline = new HashSet<>();
     for (RelationInstance instance : program.violated()) {
       for (Requirement requirement : instance.violated()) {
@@ -130,6 +128,55 @@ public final class ClosureEngine {
       }
     }
     return results;
+  }
+
+  /**
+   * Returns hypotheses that atomically give both sides of a satisfied agreement {@code target},
+   * then close every relation affected by those edits.
+   */
+  public List<Hypothesis> reviseAgreement(
+      ProgramModel program,
+      Verification verification,
+      RelationInstance instance,
+      Requirement requirement,
+      List<String> target) {
+    if (!(requirement.constraint() instanceof Constraint.Agree agree)
+        || target.isEmpty()
+        || !programs.evaluator().applies(program, instance, requirement)) {
+      return List.of();
+    }
+    List<Draft> drafts = List.of(Draft.of(programs, program));
+    for (AttributePath path : List.of(agree.left(), agree.right())) {
+      List<Draft> revised = new ArrayList<>();
+      for (Draft draft : drafts) {
+        if (programs
+            .evaluator()
+            .valueAt(draft.program(), instance, path)
+            .filter(target::equals)
+            .isPresent()) {
+          revised.add(draft);
+          continue;
+        }
+        Completer completer = new Completer(draft, verification, instance, requirement);
+        for (List<EditOperator> operators : completer.set(path, target)) {
+          extended(draft, operators).ifPresent(revised::add);
+          if (revised.size() >= MAX_COMPLETIONS) {
+            break;
+          }
+        }
+      }
+      drafts = revised;
+      if (drafts.isEmpty()) {
+        return List.of();
+      }
+    }
+    Map<se.kth.sonar.common.ContentHash, Hypothesis> unique = new LinkedHashMap<>();
+    for (Draft draft : drafts) {
+      for (Hypothesis hypothesis : close(program, verification, draft.operators(), Set.of())) {
+        unique.putIfAbsent(hypothesis.id(), hypothesis);
+      }
+    }
+    return List.copyOf(unique.values());
   }
 
   private void extend(
@@ -190,7 +237,9 @@ public final class ClosureEngine {
             baseline.contains(new Key(instance.relation(), instance.roles().values(), requirement));
         Obligation obligation = new Obligation(instance, requirement);
         boolean hard = requirement.strength() == Requirement.Strength.HARD;
-        if (hard && (!old || target)) {
+        boolean brokeConvention = requirement.strength() == Requirement.Strength.CONVENTION && !old;
+        boolean requested = requested(instance, requirement, obligations);
+        if (requested || (hard && (!old || target)) || brokeConvention) {
           blocking.add(obligation);
         } else if (hard || requirement.strength() == Requirement.Strength.SOFT || !old) {
           extendable.add(obligation);
@@ -200,6 +249,22 @@ public final class ClosureEngine {
     return new Pending(blocking, extendable);
   }
 
+  /** Returns whether the caller explicitly asked to restore this evolving relation instance. */
+  private static boolean requested(
+      RelationInstance instance, Requirement requirement, Set<Obligation> obligations) {
+    Set<ProgramObject.Ref> roles = new HashSet<>(instance.roles().values());
+    for (Obligation obligation : obligations) {
+      if (!obligation.instance().relation().equals(instance.relation())
+          || !obligation.requirement().equals(requirement)) {
+        continue;
+      }
+      if (obligation.instance().roles().values().stream().anyMatch(roles::contains)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Returns the alternative operator lists that satisfy {@code obligation} in {@code draft}; a
    * symmetric relation is completed in every orientation in which the requirement fails, and a
@@ -207,37 +272,67 @@ public final class ClosureEngine {
    */
   List<List<EditOperator>> complete(Draft draft, Verification verification, Obligation obligation) {
     Requirement requirement = obligation.requirement();
-    List<List<EditOperator>> alternatives = new ArrayList<>();
+    List<Draft> alternatives = List.of(draft);
     for (RelationInstance orientation : orientations(obligation.instance())) {
-      if (programs.evaluator().holds(draft.program(), orientation, requirement)) {
-        continue;
+      List<Draft> completed = new ArrayList<>();
+      for (Draft partial : alternatives) {
+        if (programs.evaluator().holds(partial.program(), orientation, requirement)) {
+          completed.add(partial);
+          continue;
+        }
+        for (List<EditOperator> completion :
+            completions(partial, verification, orientation, requirement)) {
+          extended(partial, completion).ifPresent(completed::add);
+          if (completed.size() >= MAX_COMPLETIONS) {
+            break;
+          }
+        }
+        if (completed.size() >= MAX_COMPLETIONS) {
+          break;
+        }
       }
-      Completer completer = new Completer(draft, verification, orientation, requirement);
-      if (requirement.guard().isPresent() && !requirement.guard().get().attributes().isEmpty()) {
-        alternatives.addAll(completer.unset(requirement.guard().get()));
-      }
-      List<List<EditOperator>> direct =
-          switch (requirement.constraint()) {
-            case Constraint.Exists exists ->
-                exists.path().attributes().isEmpty()
-                    ? completer.createRole(exists.path().role())
-                    : completer.define(exists.path());
-            case Constraint.Absent absent -> completer.unset(absent.path());
-            case Constraint.Equal equal -> completer.align(equal.left(), equal.right(), false);
-            case Constraint.Agree agree -> completer.align(agree.left(), agree.right(), true);
-            case Constraint.Resolves resolves -> completer.resolve(resolves.path());
-            case Constraint.Distinct distinct -> completer.distinguish(distinct.path());
-          };
-      alternatives.addAll(direct);
-      if (direct.isEmpty()
-          && requirement.constraint() instanceof Constraint.Exists exists
-          && exists.path().attributes().isEmpty()) {
-        alternatives.addAll(completer.structuralPrerequisites(exists.path().role()));
+      alternatives = completed;
+      if (alternatives.isEmpty()) {
+        return List.of();
       }
     }
-    return alternatives.size() > MAX_COMPLETIONS
-        ? alternatives.subList(0, MAX_COMPLETIONS)
-        : alternatives;
+    int offset = draft.operators().size();
+    return alternatives.stream()
+        .map(completed -> completed.operators().subList(offset, completed.operators().size()))
+        .distinct()
+        .limit(MAX_COMPLETIONS)
+        .toList();
+  }
+
+  /** Returns the alternative edits that make one orientation satisfy one requirement. */
+  private List<List<EditOperator>> completions(
+      Draft draft,
+      Verification verification,
+      RelationInstance orientation,
+      Requirement requirement) {
+    Completer completer = new Completer(draft, verification, orientation, requirement);
+    List<List<EditOperator>> direct =
+        switch (requirement.constraint()) {
+          case Constraint.Exists exists ->
+              exists.path().attributes().isEmpty()
+                  ? completer.createRole(exists.path().role())
+                  : completer.define(exists.path());
+          case Constraint.Absent absent -> completer.unset(absent.path());
+          case Constraint.Equal equal -> completer.align(equal.left(), equal.right(), false);
+          case Constraint.Agree agree -> completer.align(agree.left(), agree.right(), true);
+          case Constraint.Resolves resolves -> completer.resolve(resolves.path());
+          case Constraint.Distinct distinct -> completer.distinguish(distinct.path());
+        };
+    List<List<EditOperator>> alternatives = new ArrayList<>(direct);
+    if (requirement.guard().isPresent() && !requirement.guard().get().attributes().isEmpty()) {
+      alternatives.addAll(completer.unset(requirement.guard().get()));
+    }
+    if (direct.isEmpty()
+        && requirement.constraint() instanceof Constraint.Exists exists
+        && exists.path().attributes().isEmpty()) {
+      alternatives.addAll(completer.structuralPrerequisites(exists.path().role()));
+    }
+    return alternatives;
   }
 
   private List<RelationInstance> orientations(RelationInstance instance) {
@@ -679,6 +774,10 @@ public final class ClosureEngine {
       }
       String name = path.attributes().getLast();
       Attribute attribute = attributeOf(holder.get(), name);
+      if (attribute.source() instanceof Attribute.Source.Derived derived
+          && attribute.type() instanceof Attribute.Type.Flag) {
+        return realise(holder.get(), derived.function(), "false");
+      }
       List<Production> productions =
           switch (attribute.source()) {
             case Attribute.Source.Slots slots ->
@@ -746,11 +845,13 @@ public final class ClosureEngine {
           programs.factory().realise(function, target, object, program)) {
         ProgramObject holder = realisation.holder().flatMap(program::object).orElse(object);
         List<Statement> existing =
-            realisation.statement().isPresent()
-                ? program.statements(holder.ref().router()).stream()
-                    .filter(s -> s.span().equals(realisation.statement().get()))
-                    .toList()
-                : statementsOf(holder, List.of(realisation.production()), List.of());
+            realisation.existing() == ProgramModel.Realisation.Existing.KEEP
+                ? List.of()
+                : realisation.statement().isPresent()
+                    ? program.statements(holder.ref().router()).stream()
+                        .filter(s -> s.span().equals(realisation.statement().get()))
+                        .toList()
+                    : statementsOf(holder, List.of(realisation.production()), List.of());
         if (existing.isEmpty()) {
           alternatives.addAll(insert(holder, realisation.production(), realisation.values()));
         } else {
@@ -804,7 +905,10 @@ public final class ClosureEngine {
           return List.of();
         }
       }
-      Layout layout = new Layout(program.statements(object.ref().router()));
+      Layout layout =
+          new Layout(
+              program.statements(object.ref().router()),
+              program.snapshot().text(object.ref().router()).lineCount());
       List<Statement> bound = statementsOf(object, List.of(), List.of());
       Optional<SeedGenerator.Anchor> anchor =
           seeds.anchor(layout, type, bound, production.context());
@@ -843,7 +947,10 @@ public final class ClosureEngine {
      */
     private List<Statement> statementsOf(
         ProgramObject object, List<Production> productions, List<Attribute.Condition> where) {
-      Layout layout = new Layout(program.statements(object.ref().router()));
+      Layout layout =
+          new Layout(
+              program.statements(object.ref().router()),
+              program.snapshot().text(object.ref().router()).lineCount());
       List<Statement> statements = new ArrayList<>();
       for (var span : object.statements()) {
         Statement statement = layout.at(span.first()).orElse(null);

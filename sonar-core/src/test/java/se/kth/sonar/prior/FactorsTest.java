@@ -17,11 +17,14 @@ import se.kth.sonar.generate.Provenance;
 import se.kth.sonar.network.Prefix;
 import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.network.Topology;
+import se.kth.sonar.program.BgpIncidenceSet;
 import se.kth.sonar.program.CiscoIosSemantics;
+import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.ProgramService;
 import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Dialect;
+import se.kth.sonar.search.IncidenceRegion;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SiteRegion;
@@ -135,10 +138,10 @@ class FactorsTest {
     double r1 = factor.weight(site(R1), state);
     double r2 = factor.weight(site(R2), state);
     double r3 = factor.weight(site(R3), state);
-    assertThat(r3).isGreaterThan(r1).isGreaterThan(r2);
+    assertThat(r3).isGreaterThan(r1);
+    assertThat(r1).isCloseTo(r2, within(1e-12));
     assertThat(r3).isCloseTo(Math.sqrt(2.0 / 3 * 2.0 / 3), within(1e-12));
     assertThat(r1).isCloseTo(Math.sqrt(2.0 / 4 * 2.0 / 3), within(1e-12));
-    assertThat(r2).isCloseTo(Math.sqrt(1.0 / 3 * 1.0 / 3), within(1e-12));
   }
 
   @Test
@@ -174,6 +177,129 @@ class FactorsTest {
   }
 
   @Test
+  void agreedValuesUseOtherRelationInstancesAsLeaveOneOutEvidence() {
+    RouterId a = RouterId.of("10_as65001_a");
+    RouterId b = RouterId.of("11_as65001_b");
+    RouterId c = RouterId.of("12_as65001_c");
+    RouterId d = RouterId.of("13_as65001_d");
+    RouterId e = RouterId.of("14_as65001_e");
+    RouterId f = RouterId.of("15_as65001_f");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                a + ".cfg", ospfLink("a", "10.1.0.0", 10),
+                b + ".cfg", ospfLink("b", "10.1.0.1", 10),
+                c + ".cfg", ospfLink("c", "10.2.0.0", 10),
+                d + ".cfg", ospfLink("d", "10.2.0.1", 10),
+                e + ".cfg", ospfLink("e", "10.3.0.0", 45),
+                f + ".cfg", ospfLink("f", "10.3.0.1", 45)));
+    Topology topology =
+        Topology.of(snapshot.routers(), List.of(link(a, b), link(c, d), link(e, f)));
+    RepairProblem problem =
+        new RepairProblem("metric", snapshot, topology, SpecificationSet.of(List.of(BROKEN)));
+    RepairState metric =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(),
+                new Verdict(List.of(BROKEN), List.of(), List.of()),
+                new DataPlaneEvidence(Map.of(), Map.of(), Map.of())),
+            programs.model(snapshot, topology));
+    AgreementOutlierFactor factor = new AgreementOutlierFactor(programs.evaluator());
+    Region unusual =
+        new SiteRegion(
+            new Region.Id("unusual"),
+            new ProgramObject.Ref("interface", e, List.of("GigabitEthernet0/0")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region common =
+        new SiteRegion(
+            new Region.Id("common"),
+            new ProgramObject.Ref("interface", a, List.of("GigabitEthernet0/0")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(factor.weight(unusual, metric)).isCloseTo(5, within(1e-12));
+    assertThat(factor.weight(common, metric)).isEqualTo(1);
+  }
+
+  @Test
+  void aMinorityFlagWithinOneStructuralRoleUsesLeaveOneOutOdds() {
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg",
+                """
+                hostname r1
+                interface Loopback0
+                 ip address 10.0.0.1 255.255.255.255
+                router bgp 65001
+                 neighbor IBGP peer-group
+                 neighbor IBGP remote-as 65001
+                 neighbor 10.0.0.2 peer-group IBGP
+                 neighbor 10.0.0.3 peer-group IBGP
+                 neighbor 10.0.0.4 peer-group IBGP
+                 address-family ipv4
+                  neighbor 10.0.0.2 activate
+                  neighbor 10.0.0.2 next-hop-self
+                  neighbor 10.0.0.3 activate
+                  neighbor 10.0.0.3 next-hop-self
+                  neighbor 10.0.0.4 activate
+                 exit-address-family
+                """));
+    Topology topology = Topology.of(snapshot.routers(), List.of());
+    RepairProblem problem =
+        new RepairProblem("flag-outlier", snapshot, topology, SpecificationSet.of(List.of(BROKEN)));
+    RepairState outlier =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(),
+                new Verdict(List.of(BROKEN), List.of(), List.of()),
+                DataPlaneEvidence.none()),
+            programs.model(snapshot, topology));
+    AgreementOutlierFactor factor = new AgreementOutlierFactor(programs.evaluator());
+    Region missing =
+        new SiteRegion(
+            new Region.Id("missing-next-hop-self"),
+            new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.4")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region common =
+        new SiteRegion(
+            new Region.Id("common-next-hop-self"),
+            new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.2")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(factor.weight(missing, outlier)).isCloseTo(5, within(1e-12));
+    assertThat(factor.weight(common, outlier)).isEqualTo(1);
+  }
+
+  private static String ospfLink(String hostname, String address, int cost) {
+    return """
+        hostname %s
+        interface GigabitEthernet0/0
+         ip address %s 255.255.255.254
+         ip ospf 1 area 0
+         ip ospf cost %d
+         ip ospf network point-to-point
+        router ospf 1
+        """
+        .formatted(hostname, address, cost);
+  }
+
+  private static Topology.Link link(RouterId left, RouterId right) {
+    return new Topology.Link(
+        new Topology.Endpoint(left, "GigabitEthernet0/0"),
+        new Topology.Endpoint(right, "GigabitEthernet0/0"));
+  }
+
+  @Test
   void frontierLinksBetweenTheNoRouteComponentAndTheOwnerCountObservations() {
     FrontierFactor factor = new FrontierFactor();
     Region spanning =
@@ -186,7 +312,7 @@ class FactorsTest {
             List.of(BROKEN),
             Map.of(),
             new Region.Hypotheses.Deferred(4));
-    assertThat(factor.weight(spanning, state)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(spanning, state)).isCloseTo(6, within(1e-12));
     Region other =
         new RelationRegion(
             new Region.Id("other"),
@@ -199,6 +325,67 @@ class FactorsTest {
             new Region.Hypotheses.Deferred(4));
     assertThat(factor.weight(other, state)).isEqualTo(1);
     assertThat(factor.weight(site(R3), state)).isEqualTo(1);
+  }
+
+  @Test
+  void frontierEvidenceFlowsThroughTypedInterfaceAttachments() {
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg", config(1, 2, 65001),
+                R2 + ".cfg",
+                    config(2, 1, 65001)
+                            .replace(
+                                "interface GigabitEthernet0/1\n",
+                                "interface GigabitEthernet0/1\n ip access-group BLOCK out\n")
+                        + "ip access-list extended BLOCK\n 5 deny ip any any\n",
+                R3 + ".cfg", config(3, 2, 65009)));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R1, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R2, "GigabitEthernet0/0")),
+                new Topology.Link(
+                    new Topology.Endpoint(R2, "GigabitEthernet0/1"),
+                    new Topology.Endpoint(R3, "GigabitEthernet0/0"))));
+    RepairProblem problem =
+        new RepairProblem("filter", snapshot, topology, SpecificationSet.of(List.of(BROKEN)));
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                BROKEN.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(),
+            Map.of(LOOPBACK3, Set.of(R3)));
+    RepairState filtered =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(BROKEN), List.of(), List.of()), evidence),
+            programs.model(snapshot, topology));
+    Region attachedAcl =
+        new SiteRegion(
+            new Region.Id("acl"),
+            new ProgramObject.Ref("acl", R2, List.of("BLOCK")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region owner =
+        new SiteRegion(
+            new Region.Id("router"),
+            new ProgramObject.Ref("router", R2, List.of()),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(RouterEvidence.of(filtered).routeFrontier(R1, LOOPBACK3))
+        .containsExactly(RouterEvidence.Link.of(R2, R3));
+    assertThat(new FrontierFactor().weight(attachedAcl, filtered)).isCloseTo(6, within(1e-12));
+    assertThat(new FrontierFactor().weight(owner, filtered)).isEqualTo(1);
   }
 
   @Test
@@ -312,6 +499,353 @@ class FactorsTest {
   }
 
   @Test
+  void pathDifferentialsWeighOnlyLinksThatDistinguishWaypointOutcomes() {
+    Specification waypoint =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, LOOPBACK3, R2),
+            Specification.Status.parse("broken_removed"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(waypoint), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    waypoint.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1, R2, R3), DataPlaneEvidence.Disposition.ACCEPTED),
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1, R3), DataPlaneEvidence.Disposition.ACCEPTED))),
+                Map.of(),
+                Map.of()));
+    RepairState differential = RepairState.initial(state.problem(), verification, state.program());
+    RelationInstance first =
+        state.program().instances("link").stream()
+            .filter(instance -> instance.routers().containsAll(List.of(R1, R2)))
+            .findFirst()
+            .orElseThrow();
+    Region exact =
+        new RelationRegion(
+            new Region.Id("differential-link"),
+            first,
+            List.of(waypoint),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region broad =
+        new SiteRegion(
+            new Region.Id("broad-router"),
+            new ProgramObject.Ref("router", R2, List.of()),
+            List.of(waypoint),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    PathDifferentialFactor factor = new PathDifferentialFactor();
+    assertThat(factor.weight(exact, differential)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(broad, differential)).isEqualTo(1);
+  }
+
+  @Test
+  void pathDifferentialsRespectAForbiddenWaypoint() {
+    Specification waypoint =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, LOOPBACK3, R2),
+            Specification.Status.parse("broken_added"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(waypoint), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    waypoint.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1, R2, R3), DataPlaneEvidence.Disposition.ACCEPTED),
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1, R3), DataPlaneEvidence.Disposition.ACCEPTED))),
+                Map.of(),
+                Map.of()));
+    RepairState differential = RepairState.initial(state.problem(), verification, state.program());
+    RelationInstance first =
+        state.program().instances("link").stream()
+            .filter(instance -> instance.routers().containsAll(List.of(R1, R2)))
+            .findFirst()
+            .orElseThrow();
+    Region exact =
+        new RelationRegion(
+            new Region.Id("forbidden-waypoint-link"),
+            first,
+            List.of(waypoint),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(new PathDifferentialFactor().weight(exact, differential))
+        .isCloseTo(3, within(1e-12));
+  }
+
+  @Test
+  void aFormalWaypointPairWeighsItsExactBgpSessionObjects() {
+    Specification waypoint =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, LOOPBACK3, R2),
+            Specification.Status.parse("broken_removed"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(waypoint), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    waypoint.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1), DataPlaneEvidence.Disposition.ACCEPTED))),
+                Map.of(),
+                Map.of()));
+    RepairState counterexample =
+        RepairState.initial(state.problem(), verification, state.program());
+    Region session =
+        new SiteRegion(
+            new Region.Id("waypoint-session"),
+            new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.2")),
+            List.of(waypoint),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(new CounterexampleFactor().weight(session, counterexample)).isGreaterThan(3);
+  }
+
+  @Test
+  void aFormalWaypointPairWeighsAnExactMissingBgpIncidence() {
+    Specification waypoint =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, LOOPBACK3, R3),
+            Specification.Status.parse("broken_removed"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(waypoint), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    waypoint.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+                Map.of(),
+                Map.of()));
+    RepairState counterexample =
+        RepairState.initial(state.problem(), verification, state.program());
+    ProgramObject.Ref reflector = new ProgramObject.Ref("router", R1, List.of());
+    ProgramObject.Ref client = new ProgramObject.Ref("router", R3, List.of());
+    ProgramObject.Ref template = new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.2"));
+    BgpIncidenceSet incidence =
+        new BgpIncidenceSet(
+            reflector,
+            List.of(client),
+            List.of(
+                new BgpIncidenceSet.Direction(
+                    reflector,
+                    client,
+                    "10.0.0.3",
+                    List.of(new BgpIncidenceSet.Group("IBGP", template, true)))));
+    Region missing =
+        new IncidenceRegion(
+            new Region.Id("missing-waypoint-session"),
+            incidence,
+            List.of(waypoint),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(new CounterexampleFactor().weight(missing, counterexample)).isGreaterThan(3);
+  }
+
+  @Test
+  void brokenAddedReachabilityWeighsTheAcceptedFirstHopPolicyObjects() {
+    Specification forbidden =
+        new Specification(
+            new ForwardingPredicate.Reachability(R3, Prefix.parse("10.0.0.1/32")),
+            Specification.Status.parse("broken_added"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(forbidden), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    forbidden.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R3, R2, R1), DataPlaneEvidence.Disposition.ACCEPTED))),
+                Map.of(),
+                Map.of()));
+    RepairState counterexample =
+        RepairState.initial(state.problem(), verification, state.program());
+    Region firstHop =
+        new SiteRegion(
+            new Region.Id("first-hop"),
+            new ProgramObject.Ref("bgp-neighbor", R3, List.of("10.0.0.2")),
+            List.of(forbidden),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region unrelated =
+        new SiteRegion(
+            new Region.Id("unrelated"),
+            new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.2")),
+            List.of(forbidden),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    CounterexampleFactor factor = new CounterexampleFactor();
+    assertThat(factor.weight(firstHop, counterexample)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(unrelated, counterexample)).isEqualTo(1);
+  }
+
+  @Test
+  void noRouteCounterexamplesWeighTheExactDestinationOrigin() {
+    CounterexampleFactor factor = new CounterexampleFactor();
+    assertThat(factor.weight(site(R3), state)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(site(R2), state)).isEqualTo(1);
+  }
+
+  @Test
+  void noRouteCounterexamplesWeighTheExactBoundarySession() {
+    Region boundarySession =
+        new SiteRegion(
+            new Region.Id("boundary-session"),
+            new ProgramObject.Ref("bgp-neighbor", R3, List.of("10.0.0.2")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region unrelatedSession =
+        new SiteRegion(
+            new Region.Id("unrelated-session"),
+            new ProgramObject.Ref("bgp-neighbor", R1, List.of("10.0.0.2")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    RelationInstance session =
+        state.program().instances("bgp-session").stream()
+            .filter(
+                instance ->
+                    instance.roles().values().stream()
+                        .anyMatch(
+                            role ->
+                                role.equals(
+                                    new ProgramObject.Ref(
+                                        "bgp-neighbor", R3, List.of("10.0.0.2")))))
+            .findFirst()
+            .orElseThrow();
+    Region boundaryRelation =
+        new RelationRegion(
+            new Region.Id("boundary-relation"),
+            session,
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region broadSource =
+        new SiteRegion(
+            new Region.Id("broad-source"),
+            new ProgramObject.Ref("router", R1, List.of()),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    CounterexampleFactor factor = new CounterexampleFactor();
+    assertThat(factor.weight(boundarySession, state)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(boundaryRelation, state)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(unrelatedSession, state)).isEqualTo(1);
+    assertThat(factor.weight(broadSource, state)).isEqualTo(1);
+    assertThat(RouterEvidence.of(state).unresolvedByRouter()).containsKeys(R1, R2, R3);
+  }
+
+  @Test
+  void requiredIsolationDoesNotInventARoutePropagationBoundary() {
+    Specification isolation =
+        new Specification(
+            new ForwardingPredicate.Isolation(R1, LOOPBACK3),
+            Specification.Status.parse("broken_removed"));
+    Verification verification =
+        new Verification(
+            state.snapshot().id(),
+            new Verdict(List.of(isolation), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    isolation.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+                Map.of(),
+                Map.of(LOOPBACK3, Set.of(R3))));
+    RepairState isolated = RepairState.initial(state.problem(), verification, state.program());
+    Region boundarySession =
+        new SiteRegion(
+            new Region.Id("boundary-session"),
+            new ProgramObject.Ref("bgp-neighbor", R3, List.of("10.0.0.2")),
+            List.of(isolation),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(new CounterexampleFactor().weight(boundarySession, isolated)).isEqualTo(1);
+    assertThat(RouterEvidence.of(isolated).unresolvedByRouter()).doesNotContainKey(R2);
+  }
+
+  @Test
+  void aMissingBgpOriginWeighsSamePrefixOriginStatementsOnTheOwner() {
+    Prefix destination = Prefix.parse("10.200.0.0/24");
+    Specification target =
+        new Specification(new ForwardingPredicate.Reachability(R1, destination), BROKEN.status());
+    String origin =
+        """
+        hostname r3
+        interface Loopback100
+         ip address 10.200.0.1 255.255.255.0
+        interface Loopback101
+         ip address 10.200.1.1 255.255.255.0
+        router bgp 65001
+         address-family ipv4
+          network 10.200.1.0 mask 255.255.255.0
+          network 10.0.0.3 mask 255.255.255.255
+         exit-address-family
+        ip route 10.200.0.0 255.255.255.0 Loopback100
+        """;
+    Snapshot snapshot = Snapshot.of(Map.of(R1 + ".cfg", config(1, 2, 65001), R3 + ".cfg", origin));
+    Topology topology = Topology.of(snapshot.routers(), List.of());
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                target.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(),
+            Map.of());
+    RepairProblem problem =
+        new RepairProblem(
+            "missing-origin", snapshot, topology, SpecificationSet.of(List.of(target)));
+    RepairState missing =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(target), List.of(), List.of()), evidence),
+            programs.model(snapshot, topology));
+    Region samePrefix =
+        new SiteRegion(
+            new Region.Id("same-prefix"),
+            new ProgramObject.Ref("bgp-network", R3, List.of("10.200.1.0", "255.255.255.0")),
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region otherPrefix =
+        new SiteRegion(
+            new Region.Id("other-prefix"),
+            new ProgramObject.Ref("bgp-network", R3, List.of("10.0.0.3", "255.255.255.255")),
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    CounterexampleFactor factor = new CounterexampleFactor();
+    assertThat(factor.weight(samePrefix, missing)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(otherPrefix, missing)).isEqualTo(1);
+  }
+
+  @Test
   void routeFrontierAndRibEvidenceWeighTheExactRedistributionPolicy() {
     String source =
         """
@@ -377,6 +911,230 @@ class FactorsTest {
             new Region.Hypotheses.Deferred(4));
 
     assertThat(new CounterexampleFactor().weight(region, transfer)).isCloseTo(3, within(1e-12));
+  }
+
+  @Test
+  void aRouteHolderWithNoForwardingRouteWeighsTheRemoteExportPolicy() {
+    Prefix destination = Prefix.parse("10.200.11.0/24");
+    String source =
+        """
+        hostname r1
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.254
+        router bgp 65001
+         neighbor 10.1.0.1 remote-as 65002
+         address-family ipv4
+          neighbor 10.1.0.1 activate
+         exit-address-family
+        """;
+    String exporter =
+        """
+        hostname r2
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        route-map BAD permit 10
+         set ip next-hop 203.0.113.1
+        router bgp 65002
+         neighbor 10.1.0.0 remote-as 65001
+         address-family ipv4
+          neighbor 10.1.0.0 activate
+          neighbor 10.1.0.0 route-map BAD out
+         exit-address-family
+        """;
+    Snapshot snapshot = Snapshot.of(Map.of(R1 + ".cfg", source, R2 + ".cfg", exporter));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R1, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R2, "GigabitEthernet0/0"))));
+    Specification target =
+        new Specification(new ForwardingPredicate.Reachability(R1, destination), BROKEN.status());
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                target.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NULL_ROUTED))),
+            Map.of(destination, Set.of(R1, R2)),
+            Map.of(destination, Set.of(R2)));
+    RepairProblem problem =
+        new RepairProblem(
+            "unresolved-next-hop", snapshot, topology, SpecificationSet.of(List.of(target)));
+    RepairState unresolved =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(target), List.of(), List.of()), evidence),
+            programs.model(snapshot, topology));
+    RelationInstance nextHop =
+        unresolved.program().instances("route-map-match").stream()
+            .filter(instance -> !instance.satisfied())
+            .findFirst()
+            .orElseThrow();
+    Region exact =
+        new RelationRegion(
+            new Region.Id("unresolved-next-hop"),
+            nextHop,
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(4));
+    Region unrelated = site(R3);
+
+    CounterexampleFactor factor = new CounterexampleFactor();
+    assertThat(factor.weight(exact, unresolved)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(unrelated, unresolved)).isEqualTo(1);
+  }
+
+  @Test
+  void anUnobservedHostWaypointWeighsItsHostAddressObject() {
+    Prefix destination = Prefix.parse("10.0.0.9/32");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg",
+                config(1, 2, 65001),
+                R2 + ".cfg",
+                config(2, 1, 65001) + " bgp router-id 10.0.0.9\n"));
+    var program = programs.model(snapshot, state.problem().topology());
+    Specification target =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, destination, R2), BROKEN.status());
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                target.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(),
+            Map.of());
+    RepairProblem problem =
+        new RepairProblem(
+            "missing-waypoint-host",
+            snapshot,
+            state.problem().topology(),
+            SpecificationSet.of(List.of(target)));
+    RepairState missing =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(target), List.of(), List.of()), evidence),
+            program);
+    Region waypointLoopback =
+        new SiteRegion(
+            new Region.Id("waypoint-loopback"),
+            new ProgramObject.Ref("interface", R2, List.of("Loopback0")),
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(2));
+
+    assertThat(new CounterexampleFactor().weight(waypointLoopback, missing))
+        .isCloseTo(3, within(1e-12));
+  }
+
+  @Test
+  void anUnobservedHostWaypointWeighsACollidingHostIdentity() {
+    Prefix destination = Prefix.parse("10.0.0.2/32");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg", config(1, 2, 65001),
+                R2 + ".cfg", config(1, 1, 65001).replace("hostname r1", "hostname r2")));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R1, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R2, "GigabitEthernet0/0"))));
+    var program = programs.model(snapshot, topology);
+    Specification target =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, destination, R2), BROKEN.status());
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                target.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(),
+            Map.of());
+    RepairProblem problem =
+        new RepairProblem(
+            "colliding-waypoint-host", snapshot, topology, SpecificationSet.of(List.of(target)));
+    RepairState missing =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(target), List.of(), List.of()), evidence),
+            program);
+    RelationInstance collision =
+        program.instances("address-identity").stream()
+            .filter(instance -> instance.routers().contains(R2))
+            .filter(instance -> !instance.satisfied())
+            .findFirst()
+            .orElseThrow();
+    Region exact =
+        new RelationRegion(
+            new Region.Id("colliding-waypoint-loopback"),
+            collision,
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(2));
+
+    assertThat(new CounterexampleFactor().weight(exact, missing)).isGreaterThan(3);
+  }
+
+  @Test
+  void aLeadingDenyAnyReceivesLeaveOneOutDominanceOdds() {
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg",
+                """
+                hostname r1
+                ip access-list extended BAD
+                 5 deny ip any any
+                 10 permit ip host 10.0.0.1 any
+                ip access-list extended ORDINARY
+                 10 permit ip host 10.0.0.1 any
+                 20 deny ip any any
+                """));
+    Topology topology = Topology.of(snapshot.routers(), List.of());
+    ProgramModel program = programs.model(snapshot, topology);
+    RepairProblem problem =
+        new RepairProblem(
+            "dominated-acl", snapshot, topology, SpecificationSet.of(List.of(BROKEN)));
+    RepairState dominated =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(),
+                new Verdict(List.of(BROKEN), List.of(), List.of()),
+                DataPlaneEvidence.none()),
+            program);
+    Region bad =
+        new SiteRegion(
+            new Region.Id("bad"),
+            new ProgramObject.Ref("acl", R1, List.of("BAD")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(4));
+    Region ordinary =
+        new SiteRegion(
+            new Region.Id("ordinary"),
+            new ProgramObject.Ref("acl", R1, List.of("ORDINARY")),
+            List.of(BROKEN),
+            Map.of(),
+            new Region.Hypotheses.Deferred(4));
+
+    FirstMatchDominanceFactor factor = new FirstMatchDominanceFactor();
+    assertThat(factor.weight(bad, dominated)).isCloseTo(3, within(1e-12));
+    assertThat(factor.weight(ordinary, dominated)).isEqualTo(1);
   }
 
   @Test
@@ -479,8 +1237,9 @@ class FactorsTest {
         interface Loopback100
          ip address 10.200.0.1 255.255.255.0
         ip prefix-list EXPORT seq 20 permit 10.200.1.0/24
-        route-map OUT permit 100
+        route-map OUT deny 100
          match ip address prefix-list EXPORT
+         set metric 9
         router bgp 65002
          neighbor 10.1.0.0 remote-as 65001
          address-family ipv4
@@ -532,8 +1291,77 @@ class FactorsTest {
             new Region.Hypotheses.Deferred(3));
 
     assertThat(PolicyCut.missingPermits(cut)).containsOnlyKeys(exact);
-    assertThat(new PolicyCutFactor().weight(exactRegion, cut)).isEqualTo(3);
+    assertThat(new PolicyCutFactor().weight(exactRegion, cut)).isEqualTo(6);
     assertThat(new PolicyCutFactor().weight(mereReference, cut)).isEqualTo(1);
+  }
+
+  @Test
+  void aNoRouteFrontierIdentifiesAnInertTransformingDenyClause() {
+    Prefix destination = Prefix.parse("10.200.0.0/24");
+    String source =
+        """
+        hostname r1
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.254
+        router bgp 65001
+         neighbor 10.1.0.1 remote-as 65002
+        """;
+    String holder =
+        """
+        hostname r2
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        interface Loopback100
+         ip address 10.200.0.1 255.255.255.0
+        ip prefix-list EXPORT seq 10 permit 10.200.0.0/24
+        route-map OUT deny 100
+         match ip address prefix-list EXPORT
+         set metric 9
+        router bgp 65002
+         neighbor 10.1.0.0 remote-as 65001
+         address-family ipv4
+          neighbor 10.1.0.0 activate
+          neighbor 10.1.0.0 route-map OUT out
+         exit-address-family
+        """;
+    Snapshot snapshot = Snapshot.of(Map.of(R1 + ".cfg", source, R2 + ".cfg", holder));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R1, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R2, "GigabitEthernet0/0"))));
+    Specification target =
+        new Specification(new ForwardingPredicate.Reachability(R1, destination), BROKEN.status());
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                target.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(destination, Set.of(R2)),
+            Map.of(destination, Set.of(R2)));
+    RepairProblem problem =
+        new RepairProblem("policy-gate", snapshot, topology, SpecificationSet.of(List.of(target)));
+    RepairState cut =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(target), List.of(), List.of()), evidence),
+            programs.model(snapshot, topology));
+    ProgramObject.Ref gate = new ProgramObject.Ref("route-map-entry", R2, List.of("OUT", "100"));
+    Region gateRegion =
+        new SiteRegion(
+            new Region.Id("exact-gate"),
+            gate,
+            List.of(target),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(PolicyCut.missingPermits(cut)).containsOnlyKeys(gate);
+    assertThat(new PolicyCutFactor().weight(gateRegion, cut)).isEqualTo(3);
   }
 
   @Test

@@ -12,7 +12,8 @@ import se.kth.sonar.text.RouterId;
 /**
  * The candidates that move one relation instance to the state required by the verifier, possibly on
  * several routers. Most regions restore a violated program relation; a formal negative
- * counterexample can instead require suppressing an existing relation.
+ * counterexample can instead require suppressing an existing relation, while exchangeable program
+ * evidence can require revising a jointly agreed outlier.
  *
  * @param id the region's identifier
  * @param instance the relation instance
@@ -34,6 +35,10 @@ public record RelationRegion(
   public enum Goal {
     /** Make a violated relation hold. */
     RESTORE,
+    /** Materialise an optional relation whose two absent endpoints hide one another. */
+    ACTIVATE,
+    /** Change both ends of a satisfied agreement from an unusual value to its peer consensus. */
+    REVISE,
     /** Remove a relation traversed by a formal negative counterexample. */
     SUPPRESS
   }

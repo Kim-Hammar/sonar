@@ -182,17 +182,29 @@ public final class ProgramModel {
    *     carries the derived attribute, as when a value is inherited from another object
    * @param statement the one existing statement to change, when the value is realised by changing a
    *     particular statement rather than any statement of the production
+   * @param existing whether another statement of the production is replaced or kept alongside the
+   *     realisation
    */
   public record Realisation(
       Production production,
       Map<String, List<String>> values,
       Optional<ProgramObject.Ref> holder,
-      Optional<SourceSpan> statement) {
+      Optional<SourceSpan> statement,
+      Existing existing) {
+    /** How a realisation treats another statement of the same production. */
+    public enum Existing {
+      /** Replace it, as for a singleton attribute. */
+      REPLACE,
+      /** Keep it and insert another statement, as for a repeatable attachment. */
+      KEEP
+    }
+
     /** Copies the values and checks that each belongs to its slot's sort. */
     public Realisation {
       Objects.requireNonNull(production, "production");
       Objects.requireNonNull(holder, "holder");
       Objects.requireNonNull(statement, "statement");
+      Objects.requireNonNull(existing, "existing");
       SequencedMap<String, List<String>> copy = new LinkedHashMap<>();
       values.forEach(
           (slot, tokens) -> {
@@ -216,13 +228,22 @@ public final class ProgramModel {
 
     /** A realisation that edits the object itself. */
     public Realisation(Production production, Map<String, List<String>> values) {
-      this(production, values, Optional.empty(), Optional.empty());
+      this(production, values, Optional.empty(), Optional.empty(), Existing.REPLACE);
     }
 
     /** A realisation that edits {@code holder}'s statements. */
     public Realisation(
         Production production, Map<String, List<String>> values, ProgramObject.Ref holder) {
-      this(production, values, Optional.of(holder), Optional.empty());
+      this(production, values, Optional.of(holder), Optional.empty(), Existing.REPLACE);
+    }
+
+    /** A realisation that inserts beside existing statements on {@code holder}. */
+    public Realisation(
+        Production production,
+        Map<String, List<String>> values,
+        ProgramObject.Ref holder,
+        Existing existing) {
+      this(production, values, Optional.of(holder), Optional.empty(), existing);
     }
 
     /** A realisation that changes the statement at {@code statement} of {@code holder}. */
@@ -231,7 +252,7 @@ public final class ProgramModel {
         Map<String, List<String>> values,
         ProgramObject.Ref holder,
         SourceSpan statement) {
-      this(production, values, Optional.of(holder), Optional.of(statement));
+      this(production, values, Optional.of(holder), Optional.of(statement), Existing.REPLACE);
     }
   }
 }

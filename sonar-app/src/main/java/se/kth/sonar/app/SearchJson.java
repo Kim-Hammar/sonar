@@ -9,6 +9,7 @@ import se.kth.sonar.generate.Hypothesis;
 import se.kth.sonar.generate.Provenance;
 import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.search.IncidenceRegion;
+import se.kth.sonar.search.MeshRegion;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SiteRegion;
@@ -30,6 +31,7 @@ public final class SearchJson {
       case SiteRegion _ -> "site";
       case RelationRegion _ -> "relation";
       case IncidenceRegion _ -> "incidence";
+      case MeshRegion _ -> "mesh";
       case TransferRegion _ -> "transfer";
     };
   }

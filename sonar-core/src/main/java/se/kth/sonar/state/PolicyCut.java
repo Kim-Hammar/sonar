@@ -92,11 +92,15 @@ public final class PolicyCut {
       if (routeMap == null || routeMap.key().isEmpty()) {
         continue;
       }
+      RouteMapEvaluation.possibleBlockers(state.program(), routeMap, destination).stream()
+          .filter(PolicyCut::inertTransformation)
+          .map(ProgramObject::ref)
+          .forEach(cuts::add);
       String name = routeMap.key().getFirst();
       for (ProgramObject entry : state.program().objectsOf(holder)) {
         if (!entry.ref().type().equals("route-map-entry")
             || !entry.ref().key().getFirst().equals(name)
-            || entry.value("action").filter("permit"::equals).isEmpty()) {
+            || !canCarryExport(entry)) {
           continue;
         }
         for (String value : entry.values("match-prefix-list")) {
@@ -107,6 +111,31 @@ public final class PolicyCut {
         }
       }
     }
+  }
+
+  /**
+   * Returns whether an entry is an existing permit or an inert transform-bearing deny. Set
+   * operations have no effect on a denied route, so the latter is a typed policy inconsistency
+   * whose repair must be considered together with a missing match operand.
+   */
+  private static boolean canCarryExport(ProgramObject entry) {
+    if (entry.value("action").filter("permit"::equals).isPresent()) {
+      return true;
+    }
+    return entry.value("action").filter("deny"::equals).isPresent() && hasTransformation(entry);
+  }
+
+  /** Returns whether a route-map entry contains an output transformation. */
+  public static boolean hasTransformation(ProgramObject entry) {
+    return List.of(
+            "local-preference", "metric", "as-path-prepend", "communities", "next-hop", "tag")
+        .stream()
+        .anyMatch(entry::has);
+  }
+
+  /** Returns whether a matching deny clause carries transformations that IOS will never apply. */
+  private static boolean inertTransformation(ProgramObject entry) {
+    return entry.value("action").filter("deny"::equals).isPresent() && hasTransformation(entry);
   }
 
   private static java.util.Optional<ProgramObject.Ref> ref(

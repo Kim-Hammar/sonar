@@ -12,10 +12,12 @@ import se.kth.sonar.app.SearchJson;
 import se.kth.sonar.app.SpecificationJson;
 import se.kth.sonar.generate.Hypothesis;
 import se.kth.sonar.program.BgpIncidenceSet;
+import se.kth.sonar.program.BgpMesh;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.search.IncidenceRegion;
+import se.kth.sonar.search.MeshRegion;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SiteRegion;
@@ -69,6 +71,7 @@ final class RegionJson {
       case RelationRegion relation -> relation(node.putObject("relation"), relation.instance());
       case IncidenceRegion incidence ->
           incidence(node.putObject("incidence"), incidence.incidence());
+      case MeshRegion mesh -> mesh(node.putObject("mesh"), mesh.mesh());
       case TransferRegion transfer -> transfer(node.putObject("transfer"), transfer.transfer());
     }
     expansion(node.putObject("expansion"), model.expansions().get(region.id()), clock);
@@ -98,6 +101,7 @@ final class RegionJson {
       case RelationRegion relation -> relation(node.putObject("relation"), relation.instance());
       case IncidenceRegion incidence ->
           incidence(node.putObject("incidence"), incidence.incidence());
+      case MeshRegion mesh -> mesh(node.putObject("mesh"), mesh.mesh());
       case TransferRegion transfer -> transfer(node.putObject("transfer"), transfer.transfer());
     }
     expansion(node.putObject("expansion"), model.expansions().get(region.id()), clock);
@@ -130,6 +134,13 @@ final class RegionJson {
         lines.add(text.line(line));
       }
     }
+  }
+
+  private static void mesh(ObjectNode node, BgpMesh mesh) {
+    node.put("member", mesh.member().toString());
+    node.put("asn", mesh.asn());
+    ArrayNode peers = node.putArray("peers");
+    mesh.peers().forEach(peer -> peers.add(peer.toString()));
   }
 
   private static void relation(ObjectNode node, RelationInstance instance) {
@@ -170,6 +181,14 @@ final class RegionJson {
     node.put("policy", transfer.policy().toString());
     ArrayNode blockers = node.putArray("blockers");
     transfer.blockers().forEach(blocker -> blockers.add(blocker.toString()));
+    transfer
+        .attachment()
+        .ifPresent(
+            attachment -> {
+              ObjectNode value = node.putObject("attachment");
+              value.put("neighbor", attachment.neighbor().toString());
+              value.put("direction", attachment.direction());
+            });
   }
 
   private static String expansionStatus(SearchExplorer.Expansion expansion) {

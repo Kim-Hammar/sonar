@@ -13,9 +13,9 @@ import se.kth.sonar.state.RepairState;
  *
  * <p>Each distinct no-route observation on the exact policy cut contributes one Bernoulli success.
  * Against the neutral zero-observation case, the Jeffreys odds are {@code (n + 1/2) / (1/2)}. The
- * factor deliberately does not multiply by the number of unrelated program objects: observing a cut
- * localises a possible cause, but does not establish that the cut rather than another competing
- * relation caused the missing route.
+ * verifier/program join reduces a uniform prefix-list universe to the lists on the observed cut, so
+ * that reduction is the likelihood ratio. This is the same finite-model Bayes factor used for other
+ * exact counterexample relations; competing relations retain their own independent factors.
  */
 public final class PolicyCutFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -39,6 +39,10 @@ public final class PolicyCutFactor implements PriorFactor {
     if (count == null) {
       return 1;
     }
-    return 2.0 * count + 1.0;
+    long universe = state.program().objects(site.site().type()).size();
+    long alternatives =
+        observations.keySet().stream().filter(ref -> ref.type().equals(site.site().type())).count();
+    double reduction = Math.max(1.0, (double) universe / Math.max(1, alternatives));
+    return reduction * (2.0 * count + 1.0);
   }
 }

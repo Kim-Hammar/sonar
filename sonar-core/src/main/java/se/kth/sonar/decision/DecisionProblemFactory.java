@@ -21,6 +21,7 @@ import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.relation.ValueSupport;
 import se.kth.sonar.search.IncidenceRegion;
+import se.kth.sonar.search.MeshRegion;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
@@ -415,7 +416,13 @@ public final class DecisionProblemFactory {
                   });
         }
         case RelationRegion relation -> {
-          text.append(relation.goal() == RelationRegion.Goal.SUPPRESS ? "suppress " : "complete ")
+          text.append(
+                  switch (relation.goal()) {
+                    case RESTORE -> "complete ";
+                    case ACTIVATE -> "activate ";
+                    case REVISE -> "revise ";
+                    case SUPPRESS -> "suppress ";
+                  })
               .append(relation.instance().relation())
               .append(" (");
           relation
@@ -426,6 +433,12 @@ public final class DecisionProblemFactory {
           text.setLength(text.length() - 2);
           if (relation.goal() == RelationRegion.Goal.SUPPRESS) {
             text.append(") traversed as the first hop of a formal isolation counterexample");
+          } else if (relation.goal() == RelationRegion.Goal.ACTIVATE) {
+            text.append(
+                ") whose physical endpoints both omit an adjacency for an IGP their routers "
+                    + "already run");
+          } else if (relation.goal() == RelationRegion.Goal.REVISE) {
+            text.append(") whose jointly agreed value is unusual among peer relations");
           } else {
             text.append(") which violates: ");
             for (Requirement requirement : relation.instance().violated()) {
@@ -443,12 +456,28 @@ public final class DecisionProblemFactory {
                 .append(incidence.incidence().clients().size())
                 .append(" implicated same-AS clients; the set is inferred from cluster identity, ")
                 .append("loopback ownership, and observed directional peer-group roles");
-        case TransferRegion transfer ->
-            text.append("repair the verifier-observed route transfer through ")
-                .append(object(transfer.transfer().policy()))
-                .append(" at a BGP/OSPF propagation boundary; ")
+        case MeshRegion mesh ->
+            text.append("complete the direct iBGP mesh incidence for processless router ")
+                .append(object(mesh.mesh().member()))
+                .append(" across ")
+                .append(mesh.mesh().peers().size())
+                .append(" implicated same-AS BGP speakers; the set is inferred from formal ")
+                .append("no-route path evidence, AS membership, and loopback ownership");
+        case TransferRegion transfer -> {
+          text.append("repair the verifier-observed route transfer through ")
+              .append(object(transfer.transfer().policy()));
+          if (transfer.transfer().attachment().isPresent()) {
+            var attachment = transfer.transfer().attachment().orElseThrow();
+            text.append(" by attaching it ")
+                .append(attachment.direction())
+                .append(" on the exact forbidden-path edge ")
+                .append(object(attachment.neighbor()));
+          } else {
+            text.append(" at a BGP/OSPF propagation boundary; ")
                 .append(transfer.transfer().blockers().size())
                 .append(" preceding deny clauses can intercept the affected routes");
+          }
+        }
       }
       if (region.hypotheses() instanceof Region.Hypotheses.Admitted admitted) {
         text.append("; ").append(admitted.bound()).append(" candidates");
@@ -488,9 +517,11 @@ public final class DecisionProblemFactory {
         case SiteRegion site -> objects.add(site.site());
         case RelationRegion relation -> objects.addAll(relation.instance().roles().values());
         case IncidenceRegion incidence -> objects.addAll(incidence.incidence().objects());
+        case MeshRegion mesh -> objects.addAll(mesh.mesh().objects());
         case TransferRegion transfer -> {
           objects.add(transfer.transfer().policy());
           objects.addAll(transfer.transfer().blockers());
+          transfer.transfer().attachment().ifPresent(item -> objects.add(item.neighbor()));
         }
       }
       Set<ProgramObject.Ref> own = Set.copyOf(objects);

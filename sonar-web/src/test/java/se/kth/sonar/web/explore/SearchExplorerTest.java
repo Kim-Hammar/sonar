@@ -130,7 +130,14 @@ class SearchExplorerTest {
                 repository, verifier, DIALECT, ParallelismConfig.sequential(), clock, 4)) {
       assertThat(explorer.factors())
           .containsExactly(
-              "spectrum", "relation", "counterexample", "policy-cut", "frontier", "drop");
+              "spectrum",
+              "relation",
+              "agreement-outlier",
+              "first-match-dominance",
+              "counterexample",
+              "policy-cut",
+              "frontier",
+              "drop");
       assertThat(explorer.request(KEY).queued()).isTrue();
       SearchExplorer.Exploration built =
           await(explorer, e -> e.status() == SearchExplorer.Status.FINISHED);

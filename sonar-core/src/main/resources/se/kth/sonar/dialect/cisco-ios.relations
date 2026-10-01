@@ -16,6 +16,8 @@ object router
   attribute isis-area derived isis-area word
   attribute design-asn derived design-asn asn
   attribute loopback-address derived loopback-address address
+  attribute loopback-wildcard derived loopback-wildcard wildcard
+  attribute ospf-loopback-required derived ospf-loopback-required flag
 
 object interface
   key name from interface
@@ -33,6 +35,7 @@ object interface
   attribute acl-in ref acl = ip-access-group.acl where direction = in
   attribute acl-out ref acl = ip-access-group.acl where direction = out
   attribute subnet derived subnet prefix
+  attribute stub-prefix derived stub-prefix prefix
   attribute ospf-effective-area derived ospf-area area
   attribute link-peer derived link-peer ref interface
   attribute igp-peer derived igp-peer ref interface
@@ -109,6 +112,11 @@ object community-list
 
 object acl
   key name from access-list
+  attribute sequences many = acl-host.sequence acl-network.sequence acl-any.sequence
+  attribute actions many = acl-host.action acl-network.action acl-any.action
+  attribute hosts many = acl-host.host
+  attribute networks many = acl-network.network
+  attribute wildcards many = acl-network.wildcard
 
 relation bgp-session symmetric
   role local bgp-neighbor each
@@ -144,6 +152,26 @@ relation bgp-origination
   join route.mask = origin.mask
   require soft exists route
 
+relation static-origination
+  role route static-route each
+  role origin bgp-network optional
+  join origin.router = route.router
+  join origin.network = route.network
+  join origin.mask = route.mask
+  require soft exists origin when route.router.bgp-asn
+
+relation service-origination
+  role service interface each
+  role route static-route optional
+  role origin bgp-network optional
+  join route.router = service.router
+  join route.prefix = service.stub-prefix
+  join origin.router = service.router
+  join origin.prefix = service.stub-prefix
+  require soft absent service.shutdown
+  require soft exists route
+  require soft exists origin when service.router.bgp-asn
+
 relation link symmetric
   role a interface each
   role b interface optional
@@ -156,6 +184,7 @@ relation link symmetric
   require soft agree a.ospf-cost b.ospf-cost
   require soft agree a.ospf-network-type b.ospf-network-type
   require convention exists a.ospf-cost when a.ospf-effective-area
+  require convention exists a.ospf-network-type when a.ospf-effective-area
   require soft agree a.isis-enabled b.isis-enabled
   require soft agree a.isis-circuit-type b.isis-circuit-type
   require soft agree a.isis-metric b.isis-metric
@@ -199,6 +228,14 @@ relation ospf-coverage
   role network ospf-network each
   require convention exists network.covered
 
+relation ospf-loopback-origination
+  role router router each
+  role network ospf-network optional
+  join network.router = router
+  join network.network = router.loopback-address
+  join network.wildcard = router.loopback-wildcard
+  require soft exists network when router.ospf-loopback-required
+
 relation address-identity
   role interface interface each
   require hard distinct interface.address
@@ -229,6 +266,7 @@ domain ip-ospf-area area related link b.ospf-effective-area
 domain ip-ospf-area area values interface.ospf-area in router
 domain ip-ospf-area process values router.ospf-process in router
 domain ip-ospf-cost cost values interface.ospf-cost in neighbours
+domain ip-ospf-network type observed in network
 domain ip-ospf-network type literals
 domain isis-circuit-type level literals
 domain isis-is-type level literals
@@ -251,6 +289,7 @@ domain static-route-interface network,mask verifier destination
 domain static-route-interface interface names interface in router
 domain ospf-network network,wildcard values interface.subnet in router
 domain ospf-network area values interface.ospf-area in router
+domain ospf-network area values ospf-network.area in router
 domain ospf-passive-interface interface names interface in router
 domain isis-passive-interface interface names interface in router
 domain match-prefix-list list names prefix-list in router

@@ -24,9 +24,10 @@ import se.kth.sonar.verify.Verification;
  * Proposes the first operators of every candidate at a site: deleting one of the site's statements
  * or the whole object, replacing slot values with values from the slots' domains, completing a
  * statement the grammar could not match, or inserting a statement that the site's context allows
- * and that the network uses somewhere, with values from the domains. A seed is a short list of
- * operators; a statement inserted into a block that does not exist yet comes with the block's
- * opener and closer.
+ * and that the network uses somewhere, with values from the domains. A block object also owns its
+ * grammar-matched contents, so an ACL site can edit an ACL entry without introducing a separate,
+ * dialect-specific object type. A seed is a short list of operators; a statement inserted into a
+ * block that does not exist yet comes with the block's opener and closer.
  */
 public final class SeedGenerator {
   private final Grammar grammar;
@@ -52,6 +53,12 @@ public final class SeedGenerator {
     Set<Production> read = new HashSet<>();
     for (ObjectType type : schema.objects()) {
       read.addAll(type.sources());
+      if (!type.isRouter()) {
+        type.sources().stream()
+            .map(Production::opens)
+            .flatMap(Optional::stream)
+            .forEach(context -> read.addAll(grammar.productions(context)));
+      }
       for (Attribute attribute : type.attributes().values()) {
         switch (attribute.source()) {
           case Attribute.Source.Slots slots ->
@@ -81,12 +88,13 @@ public final class SeedGenerator {
       return List.of();
     }
     RouterId router = site.router();
-    Layout layout = new Layout(program.statements(router));
+    Layout layout =
+        new Layout(program.statements(router), program.snapshot().text(router).lineCount());
     ObjectType type = schema.object(site.type()).orElseThrow();
     List<Statement> bound =
         object.statements().stream().map(span -> layout.at(span.first()).orElseThrow()).toList();
     List<List<EditOperator>> seeds = new ArrayList<>();
-    for (Statement statement : bound) {
+    for (Statement statement : editable(layout, type, bound)) {
       seeds.addAll(edits(program, verification, layout, type, bound, statement));
     }
     if (!type.isRouter() && bound.size() > 1) {
@@ -94,6 +102,25 @@ public final class SeedGenerator {
     }
     seeds.addAll(insertions(program, verification, layout, type, object, bound));
     return seeds;
+  }
+
+  /** Returns an object's defining statements and the matched contents of a non-router block. */
+  private static List<Statement> editable(Layout layout, ObjectType type, List<Statement> bound) {
+    List<Statement> editable = new ArrayList<>(bound);
+    if (type.isRouter()) {
+      return editable;
+    }
+    for (Statement opener : bound) {
+      if (opener.match().flatMap(match -> match.production().opens()).isEmpty()) {
+        continue;
+      }
+      layout.statements().stream()
+          .filter(statement -> statement.match().isPresent())
+          .filter(statement -> layout.encloses(opener.span().first(), statement))
+          .filter(statement -> !editable.contains(statement))
+          .forEach(editable::add);
+    }
+    return editable;
   }
 
   /**
@@ -114,7 +141,10 @@ public final class SeedGenerator {
       return List.of();
     }
     Production production = grammar.production(productionId).orElseThrow();
-    Layout layout = new Layout(program.statements(template.router()));
+    Layout layout =
+        new Layout(
+            program.statements(template.router()),
+            program.snapshot().text(template.router()).lineCount());
     ObjectType type = schema.object(template.type()).orElseThrow();
     List<Statement> bound =
         object.statements().stream().map(span -> layout.at(span.first()).orElseThrow()).toList();
@@ -332,16 +362,21 @@ public final class SeedGenerator {
   }
 
   private boolean repeatable(Production production) {
+    Set<List<Attribute.Condition>> discriminatorCases = new HashSet<>();
     for (ObjectType type : schema.objects()) {
       for (Attribute attribute : type.attributes().values()) {
-        if (attribute.many()
-            && attribute.source() instanceof Attribute.Source.Slots slots
+        if (attribute.source() instanceof Attribute.Source.Slots slots
             && slots.slots().stream().anyMatch(ref -> ref.production().equals(production))) {
-          return true;
+          if (attribute.many()) {
+            return true;
+          }
+          if (!slots.where().isEmpty()) {
+            discriminatorCases.add(slots.where());
+          }
         }
       }
     }
-    return false;
+    return discriminatorCases.size() > 1;
   }
 
   /**
@@ -360,7 +395,8 @@ public final class SeedGenerator {
       return Optional.of(new Anchor(layout.last(), "", List.of(), List.of()));
     }
     for (Statement statement : bound.reversed()) {
-      if (statement.context().equals(context)) {
+      if (statement.context().equals(context)
+          && statement.match().map(match -> !match.production().closes()).orElse(true)) {
         return Optional.of(
             new Anchor(
                 layout.end(statement.span().first()),
@@ -373,8 +409,13 @@ public final class SeedGenerator {
       Optional<Grammar.Context> opened = statement.match().flatMap(m -> m.production().opens());
       if (opened.filter(context::equals).isPresent()) {
         int line = statement.span().first();
-        return Optional.of(
-            new Anchor(layout.end(line), layout.indentationInside(line), List.of(), List.of()));
+        int after = line;
+        for (Statement child : layout.inside(line)) {
+          if (child.match().map(match -> !match.production().closes()).orElse(true)) {
+            after = child.span().last();
+          }
+        }
+        return Optional.of(new Anchor(after, layout.indentationInside(line), List.of(), List.of()));
       }
     }
     return blockOf(layout, type, bound, context);

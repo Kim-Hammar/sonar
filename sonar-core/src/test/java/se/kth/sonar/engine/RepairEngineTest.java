@@ -297,6 +297,42 @@ class RepairEngineTest {
     }
   }
 
+  @Test
+  void adoptionPreservesDecisionOrderWhenImprovementsAreOtherwiseEqual() {
+    RepairProblem problem = problem();
+    try (ResourcePool<DataPlaneEngine> engines =
+        ResourcePool.of(1, ScriptedDataPlane::new, DataPlaneEngine::close)) {
+      ProgramService programs =
+          new ProgramService(DIALECT, new CiscoIosSemantics(DIALECT), context);
+      VerificationService verifier = new VerificationService(engines, context);
+      Verification baseline = verifier.verify(problem.initial(), problem.specifications());
+      RepairState state =
+          RepairState.initial(
+              problem, baseline, programs.model(problem.initial(), problem.topology()));
+      Hypothesis firstValue = replace(state, 11, "asn", "65001");
+      Hypothesis secondValue = replace(state, 11, "asn", "65000");
+      List<Hypothesis> decisionOrder =
+          firstValue.id().compareTo(secondValue.id()) > 0
+              ? List.of(firstValue, secondValue)
+              : List.of(secondValue, firstValue);
+      List<Adoption.Verified> tied = new ArrayList<>();
+      for (Hypothesis hypothesis : decisionOrder) {
+        Snapshot candidate = state.snapshot().patch(hypothesis.transaction()).after();
+        tied.add(
+            new Adoption.Verified(
+                hypothesis,
+                new Verification(
+                    candidate.id(),
+                    new se.kth.sonar.spec.Verdict(List.of(ADJACENCY), List.of(SESSION), List.of()),
+                    DataPlaneEvidence.none())));
+      }
+
+      Adoption.Adopted adopted = new Adoption(verifier).adopt(state, tied).orElseThrow();
+
+      assertThat(adopted.hypotheses()).containsExactly(decisionOrder.getFirst());
+    }
+  }
+
   private static Hypothesis replace(RepairState state, int line, String slot, String value) {
     return Hypothesis.of(
         state.snapshot(),

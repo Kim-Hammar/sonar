@@ -90,6 +90,7 @@ public final class BgpIncidenceGenerator {
     ProgramObject neighbor = program.object(neighborRef).orElse(null);
     ProgramObject.Ref template = neighbor == null ? group.template() : neighborRef;
     List<EditOperator> operators = new ArrayList<>();
+    operators.addAll(groupDefinition(program, source, group, provenance));
     String assigned =
         neighbor == null
             ? ""
@@ -150,6 +151,62 @@ public final class BgpIncidenceGenerator {
       }
     }
     return unique(operators);
+  }
+
+  /** Materialises an inherited same-AS peer-group convention when it is absent locally. */
+  private List<EditOperator> groupDefinition(
+      ProgramModel program,
+      ProgramObject source,
+      BgpIncidenceSet.Group group,
+      Provenance provenance) {
+    ProgramObject.Ref groupRef =
+        new ProgramObject.Ref("peer-group", source.ref().router(), List.of(group.name()));
+    if (program.object(groupRef).isPresent()) {
+      return List.of();
+    }
+    String asn = source.value("bgp-asn").orElse("");
+    if (asn.isEmpty()) {
+      return List.of();
+    }
+    EditOperator.InsertStatement anchor =
+        seeds
+            .insert(
+                program,
+                source.ref(),
+                "peer-group",
+                Map.of("group", List.of(group.name())),
+                provenance)
+            .stream()
+            .filter(EditOperator.InsertStatement.class::isInstance)
+            .map(EditOperator.InsertStatement.class::cast)
+            .findFirst()
+            .orElse(null);
+    if (anchor == null) {
+      return List.of();
+    }
+    return List.of(
+        new EditOperator.InsertBlock(
+            source.ref().router(),
+            anchor.after(),
+            List.of(
+                line(
+                    program,
+                    "peer-group",
+                    anchor.indentation(),
+                    Map.of("group", List.of(group.name()))),
+                line(
+                    program,
+                    "peer-group-remote-as",
+                    anchor.indentation(),
+                    Map.of("group", List.of(group.name()), "asn", List.of(asn))),
+                line(
+                    program,
+                    "peer-group-update-source",
+                    anchor.indentation(),
+                    Map.of(
+                        "group", List.of(group.name()),
+                        "interface", List.of("Loopback0")))),
+            provenance));
   }
 
   /**

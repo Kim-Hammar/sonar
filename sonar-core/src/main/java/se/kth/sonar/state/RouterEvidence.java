@@ -22,8 +22,9 @@ import se.kth.sonar.verify.DataPlaneEvidence;
 
 /**
  * Which routers the verifier's evidence implicates for each specification: the source, the
- * waypoint, every hop of the traced flows, and the routers that originate the destination prefix
- * through an interface, a network statement or a static route.
+ * waypoint, every hop of the traced flows, the boundary of a no-route component, and the routers
+ * that originate the destination prefix through an interface, a network statement or a static
+ * route.
  */
 public final class RouterEvidence {
   private final RepairState state;
@@ -66,11 +67,15 @@ public final class RouterEvidence {
     Set<RouterId> knowing = new HashSet<>(owners(destination));
     knowing.addAll(
         state.verification().evidence().forwarders().getOrDefault(destination, Set.of()));
+    return routeFrontier(state.problem().topology(), source, knowing);
+  }
+
+  /** Returns the nearest physical boundary from {@code source} to any router in {@code knowing}. */
+  public static Set<Link> routeFrontier(Topology topology, RouterId source, Set<RouterId> knowing) {
     Set<Link> frontier = new LinkedHashSet<>();
     if (knowing.contains(source)) {
       return frontier;
     }
-    Topology topology = state.problem().topology();
     record Hop(RouterId router, int distance) {}
     Set<RouterId> seen = new HashSet<>(Set.of(source));
     Deque<Hop> queue = new ArrayDeque<>(List.of(new Hop(source, 0)));
@@ -114,6 +119,18 @@ public final class RouterEvidence {
                     && trace.hops().equals(List.of(predicate.source())));
   }
 
+  /**
+   * Returns whether a no-route observation can implicate a route-propagation frontier.
+   *
+   * <p>When isolation itself is required, a no-route trace contains no forwarding boundary; only
+   * its source and exact origin program are evidence. An obligation for the opposite outcome, or
+   * any path-bearing predicate, can use the frontier.
+   */
+  public static boolean frontierApplies(Specification specification) {
+    return !(specification.predicate() instanceof ForwardingPredicate.Isolation)
+        || !specification.status().expectPresent();
+  }
+
   /** Returns the routers implicated for {@code specification}, in evidence order. */
   public Set<RouterId> routers(Specification specification) {
     Set<RouterId> routers = new LinkedHashSet<>();
@@ -125,6 +142,12 @@ public final class RouterEvidence {
     DataPlaneEvidence evidence = state.verification().evidence();
     for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {
       routers.addAll(trace.hops());
+    }
+    if (frontierApplies(specification) && noRouteAtSource(evidence, predicate)) {
+      for (Link link : routeFrontier(predicate.source(), predicate.destination())) {
+        routers.add(link.first());
+        routers.add(link.second());
+      }
     }
     routers.addAll(owners(predicate.destination()));
     routers.removeIf(router -> !state.snapshot().contains(router));

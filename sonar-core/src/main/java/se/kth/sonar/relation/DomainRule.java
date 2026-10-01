@@ -81,7 +81,7 @@ public record DomainRule(Production production, List<String> slots, Origin origi
     /** A value of the slot's sort that is not used in the network. */
     record Fresh() implements Origin {}
 
-    /** Every literal of the slot's enumeration. */
+    /** Every finite literal declared by the grammar. */
     record Literals() implements Origin {}
 
     /**

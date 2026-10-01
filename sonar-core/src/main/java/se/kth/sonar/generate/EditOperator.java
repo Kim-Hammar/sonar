@@ -36,11 +36,14 @@ public sealed interface EditOperator {
    *
    * @param statement the statement
    * @param last the last line to delete, which is the statement's own line unless it opens a block
+   * @param provenance why the deletion is proposed
    */
-  record DeleteStatement(Statement statement, int last) implements EditOperator {
+  record DeleteStatement(Statement statement, int last, Provenance provenance)
+      implements EditOperator {
     /** Checks the components. */
     public DeleteStatement {
       Objects.requireNonNull(statement, "statement");
+      Objects.requireNonNull(provenance, "provenance");
       if (last < statement.span().first()) {
         throw new IllegalArgumentException("the block ends before the statement: " + last);
       }
@@ -48,17 +51,22 @@ public sealed interface EditOperator {
 
     /** Deletes only the statement's line. */
     public DeleteStatement(Statement statement) {
-      this(statement, statement.span().first());
+      this(statement, statement.span().first(), new Provenance.Existing());
+    }
+
+    /** Deletes only the statement's line for the given analysis reason. */
+    public DeleteStatement(Statement statement, Provenance provenance) {
+      this(statement, statement.span().first(), provenance);
+    }
+
+    /** Deletes a statement or block already present in the configuration. */
+    public DeleteStatement(Statement statement, int last) {
+      this(statement, last, new Provenance.Existing());
     }
 
     @Override
     public RouterId router() {
       return statement.span().router();
-    }
-
-    @Override
-    public Provenance provenance() {
-      return new Provenance.Existing();
     }
 
     @Override

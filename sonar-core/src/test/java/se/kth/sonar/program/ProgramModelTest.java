@@ -145,6 +145,35 @@ class ProgramModelTest {
     assertThat(model.instances("router-identity")).allMatch(RelationInstance::satisfied);
   }
 
+  @Test
+  void routerWideOspfProcessesDoNotTypeAnExternalLinkAsIgp() {
+    String first =
+        R1.replace(" ip ospf 1 area 0\n", "").replace(" network 10.1.0.0 0.0.0.1 area 0\n", "");
+    String second = R2.replace(" network 10.1.0.0 0.0.0.1 area 1\n", "");
+    Snapshot snapshot = Snapshot.of(Map.of("1_as65001_r1.cfg", first, "2_as65002_r2.cfg", second));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(RouterId.of("1_as65001_r1"), "GigabitEthernet0/0"),
+                    new Topology.Endpoint(RouterId.of("2_as65002_r2"), "GigabitEthernet0/0"))));
+
+    ProgramModel external =
+        new ProgramService(DIALECT, new CiscoIosSemantics(DIALECT), context)
+            .model(snapshot, topology);
+
+    assertThat(
+            external
+                .object(ProgramObject.Ref.parse("interface:1_as65001_r1:GigabitEthernet0/0"))
+                .orElseThrow()
+                .value("igp-peer"))
+        .isEmpty();
+    assertThat(external.instances("link").getFirst().violated())
+        .extracting(requirement -> requirement.constraint().toString())
+        .noneSatisfy(value -> assertThat(value).contains("igp-enabled"));
+  }
+
   private static ProgramObject object(String ref) {
     return model.object(ProgramObject.Ref.parse(ref)).orElseThrow();
   }

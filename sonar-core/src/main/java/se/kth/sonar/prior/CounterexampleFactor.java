@@ -1,20 +1,29 @@
 package se.kth.sonar.prior;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.execution.ContentCache;
+import se.kth.sonar.network.Prefix;
+import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
+import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.program.RouteMapEvaluation;
 import se.kth.sonar.relation.ObjectType;
+import se.kth.sonar.search.IncidenceRegion;
+import se.kth.sonar.search.MeshRegion;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SiteRegion;
 import se.kth.sonar.search.TransferRegion;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
+import se.kth.sonar.state.BgpSessionCut;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.state.RouterEvidence;
 import se.kth.sonar.text.RouterId;
@@ -23,15 +32,21 @@ import se.kth.sonar.verify.DataPlaneEvidence;
 /**
  * Weights regions that span an exact relation named by a formal counterexample.
  *
- * <p>For an isolation violation, the first forwarding edge is a concrete forbidden relation. For a
- * waypoint violation, the source and required waypoint are operands of the obligation itself. A
- * no-route trace that stops at its source is an exact observation about that router's local route
- * program. For a path-diversity deficit, an unused physical next hop that already holds the route
- * identifies a possible protocol-transfer boundary; typed route-map evaluation then retains only
- * policies that permit that destination. Each distinct violated predicate contributes one
- * observation. A matching region with {@code n} observations receives the Jeffreys odds {@code (n +
- * 1/2) / (1/2)}; unrelated regions retain weight one. This is deliberately narrower than topology
- * proximity: it uses only relations present in the specification or observed by the verifier.
+ * <p>For an isolation violation, including a reachability predicate whose specification expects
+ * absence, the first forwarding edge is a concrete forbidden relation. For a waypoint violation,
+ * the source and required waypoint are operands of the obligation itself. A no-route trace that
+ * stops at its source identifies its exact origin slice and the sessions crossing the observed
+ * route-propagation boundary. Only when neither slice exists is the source's local route program
+ * the residual explanation. The origin slice includes the interface or route object that owns the
+ * destination and, when an exact static route has no matching BGP origin, the same-prefix BGP
+ * origin statements that can materialise the missing relation. A boundary session is identified by
+ * joining its peer address to interface ownership, rather than by router proximity. For a
+ * path-diversity deficit, an unused physical next hop that already holds the route identifies a
+ * possible protocol-transfer boundary; typed route-map evaluation then retains only policies that
+ * permit that destination. Each distinct violated predicate contributes one observation. A matching
+ * region with {@code n} observations receives the Jeffreys odds {@code (n + 1/2) / (1/2)};
+ * unrelated regions retain weight one. This is deliberately narrower than topology proximity: it
+ * uses only relations present in the specification or observed by the verifier.
  */
 public final class CounterexampleFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -42,6 +57,10 @@ public final class CounterexampleFactor implements PriorFactor {
   private record Evidence(
       Map<Pair, Integer> relations,
       Map<RouterId, Integer> noRouteSources,
+      Map<ProgramObject.Ref, Integer> noRouteOrigins,
+      Map<ProgramObject.Ref, Integer> boundarySites,
+      Map<ProgramObject.Ref, Integer> waypointSessions,
+      Map<ContentHash, Integer> sessionCuts,
       Map<ProgramObject.Ref, Integer> transfers) {}
 
   private record Pair(RouterId first, RouterId second) {
@@ -65,6 +84,43 @@ public final class CounterexampleFactor implements PriorFactor {
         weight = (count + HALF) / HALF;
       }
     }
+    if (region instanceof SiteRegion site) {
+      int count = evidence.noRouteOrigins().getOrDefault(site.site(), 0);
+      count = Math.max(count, evidence.boundarySites().getOrDefault(site.site(), 0));
+      if (count > 0) {
+        weight = Math.max(weight, (count + HALF) / HALF);
+      }
+      int sessions = evidence.waypointSessions().getOrDefault(site.site(), 0);
+      if (sessions > 0) {
+        long universe = state.program().objects("bgp-neighbor").size();
+        double reduction = (double) universe / evidence.waypointSessions().size();
+        weight = Math.max(weight, reduction * (sessions + HALF) / HALF);
+      }
+    }
+    if (region instanceof RelationRegion relation) {
+      int count = 0;
+      for (ProgramObject.Ref role : relation.instance().roles().values()) {
+        count = Math.max(count, evidence.noRouteOrigins().getOrDefault(role, 0));
+        count = Math.max(count, evidence.boundarySites().getOrDefault(role, 0));
+      }
+      if (count > 0) {
+        double reduction =
+            relation.instance().relation().equals("address-identity")
+                ? (double) state.program().objects("interface").size()
+                    / evidence.noRouteOrigins().size()
+                : 1;
+        weight = Math.max(weight, reduction * (count + HALF) / HALF);
+      }
+      int cuts = evidence.sessionCuts().getOrDefault(relation.instance().id(), 0);
+      if (cuts > 0) {
+        long universe =
+            state.program().instances("bgp-session").stream()
+                .filter(RelationInstance::satisfied)
+                .count();
+        double reduction = (double) Math.max(1, universe) / evidence.sessionCuts().size();
+        weight = Math.max(weight, reduction * (cuts + HALF) / HALF);
+      }
+    }
     if (region instanceof RelationRegion relation
         && relation.instance().relation().equals("route-map-liveness")) {
       ProgramObject.Ref routeMap = relation.instance().roles().get("map");
@@ -86,6 +142,12 @@ public final class CounterexampleFactor implements PriorFactor {
         weight = Math.max(weight, (count + HALF) / HALF);
       }
     }
+    int missingSessionObservations = missingSessionObservations(region, evidence.relations());
+    if (missingSessionObservations > 0) {
+      long universe = Math.max(1, state.program().objects("bgp-neighbor").size());
+      double reduction = (double) universe / evidence.relations().size();
+      weight = Math.max(weight, reduction * (missingSessionObservations + HALF) / HALF);
+    }
     if (region.routers().size() < 2) {
       return weight;
     }
@@ -98,9 +160,37 @@ public final class CounterexampleFactor implements PriorFactor {
     return weight;
   }
 
+  /**
+   * Returns observations whose exact formal endpoints are completed by a missing-session region.
+   *
+   * <p>Existing BGP neighbor objects are handled above. Incidence and mesh regions are the finite
+   * representation of the complementary case: the session object itself is absent, so there is no
+   * site to join against. Matching their typed endpoints to the waypoint operands gives the same
+   * finite-hypothesis reduction without relying on router names or topology proximity.
+   */
+  private static int missingSessionObservations(Region region, Map<Pair, Integer> relations) {
+    int observations = 0;
+    if (region instanceof IncidenceRegion incidence) {
+      RouterId reflector = incidence.incidence().reflector().router();
+      for (ProgramObject.Ref client : incidence.incidence().clients()) {
+        observations += relations.getOrDefault(Pair.of(reflector, client.router()), 0);
+      }
+    } else if (region instanceof MeshRegion mesh) {
+      RouterId member = mesh.mesh().member().router();
+      for (ProgramObject.Ref peer : mesh.mesh().peers()) {
+        observations += relations.getOrDefault(Pair.of(member, peer.router()), 0);
+      }
+    }
+    return observations;
+  }
+
   private static Evidence observations(RepairState state) {
     Map<Pair, Integer> relations = new HashMap<>();
     Map<RouterId, Integer> noRouteSources = new HashMap<>();
+    Map<ProgramObject.Ref, Integer> noRouteOrigins = new HashMap<>();
+    Map<ProgramObject.Ref, Integer> boundarySites = new HashMap<>();
+    Map<ProgramObject.Ref, Integer> waypointSessions = new HashMap<>();
+    Map<ContentHash, Integer> sessionCuts = new HashMap<>();
     Map<ProgramObject.Ref, Integer> transfers = new HashMap<>();
     Set<String> seen = new HashSet<>();
     Set<String> seenTransfers = new HashSet<>();
@@ -111,37 +201,339 @@ public final class CounterexampleFactor implements PriorFactor {
       if (!seen.add(predicate.key())) {
         continue;
       }
+      if (routeHolderDeadEndAtSource(evidence, predicate)) {
+        for (ProgramObject.Ref site : exportingPolicySlice(state.program(), predicate.source())) {
+          boundarySites.merge(site, 1, Integer::sum);
+        }
+      }
       if (RouterEvidence.noRouteAtSource(evidence, predicate)) {
-        noRouteSources.merge(predicate.source(), 1, Integer::sum);
+        Set<ProgramObject.Ref> exactOrigins = origins(state.program(), predicate.destination());
+        for (ProgramObject.Ref origin : exactOrigins) {
+          noRouteOrigins.merge(origin, 1, Integer::sum);
+        }
+        Set<RouterEvidence.Link> frontiers = Set.of();
+        if (RouterEvidence.frontierApplies(specification)) {
+          frontiers = routerEvidence.routeFrontier(predicate.source(), predicate.destination());
+          for (RouterEvidence.Link frontier : frontiers) {
+            for (ProgramObject.Ref site : boundarySites(state.program(), frontier)) {
+              boundarySites.merge(site, 1, Integer::sum);
+            }
+          }
+        }
+        if (exactOrigins.isEmpty() && frontiers.isEmpty()) {
+          noRouteSources.merge(predicate.source(), 1, Integer::sum);
+        }
       }
       if (predicate instanceof ForwardingPredicate.Waypointing waypointing) {
         boolean observed =
             evidence.traces().getOrDefault(predicate, List.of()).stream()
                 .anyMatch(trace -> trace.hops().contains(waypointing.waypoint()));
-        if (!observed && !waypointing.source().equals(waypointing.waypoint())) {
+        if (specification.status().expectPresent()
+            && !observed
+            && !waypointing.source().equals(waypointing.waypoint())) {
           relations.merge(Pair.of(waypointing.source(), waypointing.waypoint()), 1, Integer::sum);
+          for (ProgramObject.Ref session :
+              sessionSites(state.program(), waypointing.source(), waypointing.waypoint())) {
+            waypointSessions.merge(session, 1, Integer::sum);
+          }
+          for (ProgramObject.Ref origin : hostOriginsAtWaypoint(state.program(), waypointing)) {
+            noRouteOrigins.merge(origin, 1, Integer::sum);
+          }
+        } else if (!specification.status().expectPresent() && observed) {
+          addForbiddenWaypointChoices(state, specification, boundarySites);
         }
-      } else if (predicate instanceof ForwardingPredicate.Isolation) {
+      } else if (predicate instanceof ForwardingPredicate.Isolation
+          || (predicate instanceof ForwardingPredicate.Reachability
+              && !specification.status().expectPresent())) {
         for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {
-          if (trace.hops().size() >= 2) {
-            relations.merge(Pair.of(trace.hops().get(0), trace.hops().get(1)), 1, Integer::sum);
+          if (trace.disposition() == DataPlaneEvidence.Disposition.ACCEPTED
+              && trace.hops().size() >= 2) {
+            Pair edge = Pair.of(trace.hops().get(0), trace.hops().get(1));
+            relations.merge(edge, 1, Integer::sum);
+            for (ProgramObject.Ref site :
+                boundarySites(
+                    state.program(),
+                    new RouterEvidence.Link(trace.hops().get(0), trace.hops().get(1)))) {
+              boundarySites.merge(site, 1, Integer::sum);
+            }
           }
         }
       }
       String transferKey = predicate.source() + "|" + predicate.destination();
       if (seenTransfers.add(transferKey)) {
-        countTransfers(state, routerEvidence, predicate, transfers);
+        countTransfers(state, routerEvidence, specification, transfers);
       }
     }
-    return new Evidence(Map.copyOf(relations), Map.copyOf(noRouteSources), Map.copyOf(transfers));
+    for (BgpSessionCut cut : BgpSessionCut.infer(state)) {
+      int count =
+          (int) cut.targets().stream().map(target -> target.predicate().key()).distinct().count();
+      sessionCuts.put(cut.session().id(), count);
+    }
+    return new Evidence(
+        Map.copyOf(relations),
+        Map.copyOf(noRouteSources),
+        Map.copyOf(noRouteOrigins),
+        Map.copyOf(boundarySites),
+        Map.copyOf(waypointSessions),
+        Map.copyOf(sessionCuts),
+        Map.copyOf(transfers));
+  }
+
+  /**
+   * Returns host-address interfaces at a required waypoint for an unresolved host destination. The
+   * formal waypoint operand supplies the router; no naming or topology-distance convention is
+   * needed. A host route can be originated only by a host-address object on that router. A local
+   * identity equal to the destination is direct evidence; a duplicated local host address is also
+   * evidence because the program violates unique address ownership and therefore cannot name both
+   * formal endpoints.
+   */
+  private static Set<ProgramObject.Ref> hostOriginsAtWaypoint(
+      ProgramModel program, ForwardingPredicate.Waypointing waypointing) {
+    if (waypointing.destination().length() != 32) {
+      return Set.of();
+    }
+    ProgramObject owner =
+        program
+            .object(new ProgramObject.Ref(ObjectType.ROUTER, waypointing.waypoint(), List.of()))
+            .orElse(null);
+    String address = waypointing.destination().network().toString();
+    if (owner == null) {
+      return Set.of();
+    }
+    boolean declared =
+        owner.values("ospf-router-id").contains(address)
+            || owner.values("bgp-router-id").contains(address);
+    Set<ProgramObject.Ref> origins = new HashSet<>();
+    for (ProgramObject object : program.objectsOf(waypointing.waypoint())) {
+      if (!object.ref().type().equals("interface")) {
+        continue;
+      }
+      boolean hostAddress =
+          object.values("subnet").stream()
+              .map(Prefix::tryParse)
+              .flatMap(Optional::stream)
+              .anyMatch(prefix -> prefix.length() == 32);
+      boolean duplicated =
+          object.values("address").stream()
+              .anyMatch(
+                  candidate ->
+                      program.objects("interface").stream()
+                              .filter(peer -> peer.values("address").contains(candidate))
+                              .map(ProgramObject::ref)
+                              .distinct()
+                              .count()
+                          > 1);
+      if (hostAddress && (declared || duplicated)) {
+        origins.add(object.ref());
+      }
+    }
+    return Set.copyOf(origins);
+  }
+
+  /** Returns whether a BGP route exists at the source but cannot produce a forwarding next hop. */
+  private static boolean routeHolderDeadEndAtSource(
+      DataPlaneEvidence evidence, ForwardingPredicate predicate) {
+    if (!evidence
+        .routeHolders()
+        .getOrDefault(predicate.destination(), Set.of())
+        .contains(predicate.source())) {
+      return false;
+    }
+    List<DataPlaneEvidence.Trace> traces = evidence.traces().get(predicate);
+    return traces != null
+        && !traces.isEmpty()
+        && traces.stream()
+            .allMatch(
+                trace ->
+                    trace.hops().equals(List.of(predicate.source()))
+                        && (trace.disposition() == DataPlaneEvidence.Disposition.NO_ROUTE
+                            || trace.disposition() == DataPlaneEvidence.Disposition.NULL_ROUTED));
+  }
+
+  /**
+   * Returns the remote session and outbound policy objects that can have supplied a source's BGP
+   * route. When the source holds a route but its forwarding trace is still null routed, this is the
+   * exact control-plane slice capable of making the selected next hop unusable.
+   */
+  private static Set<ProgramObject.Ref> exportingPolicySlice(
+      ProgramModel program, RouterId source) {
+    Map<String, RouterId> addresses = new HashMap<>();
+    for (ProgramObject object : program.objects("interface")) {
+      object.value("address").ifPresent(address -> addresses.put(address, object.ref().router()));
+    }
+    Set<ProgramObject.Ref> sites = new HashSet<>();
+    for (ProgramObject neighbor : program.objects("bgp-neighbor")) {
+      Optional<RouterId> peer =
+          neighbor
+              .value("peer-router")
+              .filter(value -> ProgramObject.Ref.isReference(value, ObjectType.ROUTER))
+              .map(ProgramObject.Ref::parse)
+              .map(ProgramObject.Ref::router);
+      if (peer.isEmpty() && !neighbor.ref().key().isEmpty()) {
+        peer = Optional.ofNullable(addresses.get(neighbor.ref().key().getFirst()));
+      }
+      if (peer.isEmpty() || !peer.get().equals(source)) {
+        continue;
+      }
+      sites.add(neighbor.ref());
+      for (String value : neighbor.values("route-map-out")) {
+        ProgramObject.Ref map =
+            ProgramObject.Ref.isReference(value, "route-map")
+                ? ProgramObject.Ref.parse(value)
+                : new ProgramObject.Ref("route-map", neighbor.ref().router(), List.of(value));
+        sites.add(map);
+        program.objectsOf(neighbor.ref().router()).stream()
+            .filter(object -> object.ref().type().equals("route-map-entry"))
+            .filter(object -> !object.ref().key().isEmpty())
+            .filter(object -> object.ref().key().getFirst().equals(map.key().getFirst()))
+            .map(ProgramObject::ref)
+            .forEach(sites::add);
+      }
+    }
+    return Set.copyOf(sites);
+  }
+
+  /** Returns BGP neighbors whose peer address joins the two ends of an observed boundary. */
+  private static Set<ProgramObject.Ref> boundarySites(
+      ProgramModel program, RouterEvidence.Link boundary) {
+    Map<String, RouterId> addresses = new HashMap<>();
+    for (ProgramObject object : program.objects("interface")) {
+      object.value("address").ifPresent(address -> addresses.put(address, object.ref().router()));
+    }
+    Set<ProgramObject.Ref> sites = new HashSet<>();
+    for (ProgramObject object : program.objects("bgp-neighbor")) {
+      if (object.ref().key().isEmpty()) {
+        continue;
+      }
+      RouterId peer = addresses.get(object.ref().key().getFirst());
+      if (peer != null
+          && Pair.of(object.ref().router(), peer)
+              .equals(Pair.of(boundary.first(), boundary.second()))) {
+        addPolicySlice(program, object, sites);
+      }
+    }
+    return Set.copyOf(sites);
+  }
+
+  /** Adds one BGP session and the route-map objects that directly control that session. */
+  private static void addPolicySlice(
+      ProgramModel program, ProgramObject neighbor, Set<ProgramObject.Ref> sites) {
+    sites.add(neighbor.ref());
+    for (String attribute : List.of("route-map-in", "route-map-out")) {
+      for (String value : neighbor.values(attribute)) {
+        ProgramObject.Ref map =
+            ProgramObject.Ref.isReference(value, "route-map")
+                ? ProgramObject.Ref.parse(value)
+                : new ProgramObject.Ref("route-map", neighbor.ref().router(), List.of(value));
+        if (program.object(map).isEmpty()) {
+          continue;
+        }
+        sites.add(map);
+        program.objectsOf(map.router()).stream()
+            .filter(object -> object.ref().type().equals("route-map-entry"))
+            .filter(object -> !object.ref().key().isEmpty())
+            .filter(object -> object.ref().key().getFirst().equals(map.key().getFirst()))
+            .map(ProgramObject::ref)
+            .forEach(sites::add);
+      }
+    }
+  }
+
+  /** Adds the policy choices at the source of a path through a forbidden waypoint. */
+  private static void addForbiddenWaypointChoices(
+      RepairState state, Specification specification, Map<ProgramObject.Ref, Integer> sites) {
+    ForwardingPredicate.Waypointing waypointing =
+        (ForwardingPredicate.Waypointing) specification.predicate();
+    Set<RouterId> holders =
+        state
+            .verification()
+            .evidence()
+            .routeHolders()
+            .getOrDefault(waypointing.destination(), Set.of());
+    Set<RouterEvidence.Link> choices = new HashSet<>();
+    for (DataPlaneEvidence.Trace trace :
+        state.verification().evidence().traces().getOrDefault(waypointing, List.of())) {
+      if (trace.disposition() == DataPlaneEvidence.Disposition.ACCEPTED
+          && trace.hops().contains(waypointing.waypoint())
+          && trace.hops().size() >= 2) {
+        choices.add(RouterEvidence.Link.of(trace.hops().get(0), trace.hops().get(1)));
+      }
+    }
+    for (RouterId peer : state.problem().topology().neighbours(waypointing.source())) {
+      if (holders.contains(peer)) {
+        choices.add(RouterEvidence.Link.of(waypointing.source(), peer));
+      }
+    }
+    for (RouterEvidence.Link choice : choices) {
+      for (ProgramObject.Ref site : boundarySites(state.program(), choice)) {
+        sites.merge(site, 1, Integer::sum);
+      }
+    }
+  }
+
+  /** Returns the exact BGP session objects joining two formal waypoint operands. */
+  private static Set<ProgramObject.Ref> sessionSites(
+      ProgramModel program, RouterId first, RouterId second) {
+    Set<ProgramObject.Ref> sites = new HashSet<>();
+    for (ProgramObject object : program.objects("bgp-neighbor")) {
+      Optional<RouterId> peer =
+          object
+              .value("peer-router")
+              .filter(value -> ProgramObject.Ref.isReference(value, ObjectType.ROUTER))
+              .map(ProgramObject.Ref::parse)
+              .map(ProgramObject.Ref::router);
+      if (peer.isPresent()
+          && ((object.ref().router().equals(first) && peer.get().equals(second))
+              || (object.ref().router().equals(second) && peer.get().equals(first)))) {
+        sites.add(object.ref());
+      }
+    }
+    return Set.copyOf(sites);
+  }
+
+  /** Returns the exact origin objects and edit sites that can complete a missing BGP origin. */
+  private static Set<ProgramObject.Ref> origins(ProgramModel program, Prefix destination) {
+    Set<ProgramObject.Ref> origins = new HashSet<>();
+    Set<RouterId> missingBgpOrigins = new HashSet<>();
+    for (ProgramObject object : program.objects()) {
+      List<String> values = new ArrayList<>();
+      switch (object.ref().type()) {
+        case "interface" -> {
+          values.addAll(object.values("subnet"));
+          object.value("address").ifPresent(address -> values.add(address + "/32"));
+        }
+        case "bgp-network", "static-route" -> values.addAll(object.values("prefix"));
+        default -> {}
+      }
+      if (values.stream()
+          .map(Prefix::tryParse)
+          .flatMap(Optional::stream)
+          .anyMatch(destination::equals)) {
+        origins.add(object.ref());
+        if (object.ref().type().equals("static-route")) {
+          missingBgpOrigins.add(object.ref().router());
+        }
+      }
+    }
+    for (ProgramObject object : program.objects("bgp-network")) {
+      if (missingBgpOrigins.contains(object.ref().router())
+          && object.values("prefix").stream()
+              .map(Prefix::tryParse)
+              .flatMap(Optional::stream)
+              .anyMatch(prefix -> prefix.length() == destination.length())) {
+        origins.add(object.ref());
+      }
+    }
+    return Set.copyOf(origins);
   }
 
   /** Joins one forwarding observation to exact BGP-to-OSPF policy uses. */
   private static void countTransfers(
       RepairState state,
       RouterEvidence routerEvidence,
-      ForwardingPredicate predicate,
+      Specification specification,
       Map<ProgramObject.Ref, Integer> transfers) {
+    ForwardingPredicate predicate = specification.predicate();
     DataPlaneEvidence evidence = state.verification().evidence();
     Set<RouterId> holders = evidence.routeHolders().getOrDefault(predicate.destination(), Set.of());
     Set<RouterId> candidates = new HashSet<>();
@@ -159,7 +551,8 @@ public final class CounterexampleFactor implements PriorFactor {
     if (predicate instanceof ForwardingPredicate.Waypointing waypointing) {
       for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {
         if (trace.disposition() == DataPlaneEvidence.Disposition.ACCEPTED
-            && !trace.hops().contains(waypointing.waypoint())) {
+            && (trace.hops().contains(waypointing.waypoint())
+                != specification.status().expectPresent())) {
           trace.hops().stream().filter(holders::contains).forEach(candidates::add);
         }
       }

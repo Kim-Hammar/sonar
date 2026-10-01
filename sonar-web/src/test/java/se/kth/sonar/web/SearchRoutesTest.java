@@ -141,7 +141,14 @@ class SearchRoutesTest {
     assertThat(search.path("factors"))
         .extracting(JsonNode::asText)
         .containsExactly(
-            "spectrum", "relation", "counterexample", "policy-cut", "frontier", "drop");
+            "spectrum",
+            "relation",
+            "agreement-outlier",
+            "first-match-dominance",
+            "counterexample",
+            "policy-cut",
+            "frontier",
+            "drop");
     JsonNode summary = search.path("summary");
     assertThat(summary.path("routers").asInt()).isEqualTo(3);
     assertThat(summary.path("specifications").asInt()).isEqualTo(8);
@@ -170,7 +177,14 @@ class SearchRoutesTest {
       assertThat(row.path("factors").fieldNames())
           .toIterable()
           .containsExactly(
-              "spectrum", "relation", "counterexample", "policy-cut", "frontier", "drop");
+              "spectrum",
+              "relation",
+              "agreement-outlier",
+              "first-match-dominance",
+              "counterexample",
+              "policy-cut",
+              "frontier",
+              "drop");
       assertThat(row.path("partition").asText()).isNotEmpty();
     }
     assertThat(mass).isCloseTo(1, org.assertj.core.data.Offset.offset(1e-9));

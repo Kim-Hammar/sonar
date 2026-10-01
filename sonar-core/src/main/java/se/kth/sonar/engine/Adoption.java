@@ -23,8 +23,8 @@ import se.kth.sonar.verify.VerificationService;
  * one step.
  *
  * <p>Candidates that improve the verdict without side effects are taken in order of how few
- * specifications they leave unresolved, then how small they are, then whether their values were
- * observed in the network. A candidate joins the adoption when its edits can be rebased over those
+ * specifications they leave unresolved, then the strength of their program-analysis evidence, then
+ * how small they are. A candidate joins the adoption when its edits can be rebased over those
  * chosen before it without touching the same lines. The union is verified once and adopted if it
  * improves on the best single candidate without side effects; otherwise the best single candidate
  * is adopted, whose verification is already known.
@@ -74,9 +74,8 @@ public final class Adoption {
             .filter(c -> c.verification().verdict().improvesOn(state.verification().verdict()))
             .sorted(
                 Comparator.comparingInt((Verified c) -> c.verification().verdict().loss())
-                    .thenComparingInt(c -> c.hypothesis().cost())
                     .thenComparing(c -> c.hypothesis().support())
-                    .thenComparing(c -> c.hypothesis().id()))
+                    .thenComparingInt(c -> c.hypothesis().cost()))
             .toList();
     if (improvements.isEmpty()) {
       return Optional.empty();

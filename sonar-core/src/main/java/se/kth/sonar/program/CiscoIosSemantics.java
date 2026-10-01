@@ -43,11 +43,14 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
           "isis-level-1",
           "link-peer",
           "loopback-address",
+          "loopback-wildcard",
           "ospf-coverage",
+          "ospf-loopback-required",
           "network-prefix",
           "ospf-area",
           "route-map-use",
-          "subnet");
+          "subnet",
+          "stub-prefix");
   private static final Pattern NAME_ASN = Pattern.compile("_as(\\d+)_");
   private static final int MAX_HOSTS = 4;
   private static final int NET_SUFFIX_GROUPS = 4;
@@ -136,9 +139,9 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
 
   /**
    * Adds the peer of every interface whose physical link is typed as an IGP relation. A design-AS
-   * equality types the ordinary intra-domain case. Matching configured protocol processes type the
-   * relation independently of BGP AS labels, which correctly models OSPF and IS-IS links that cross
-   * those labels without treating every physical link as an IGP adjacency.
+   * equality types the ordinary intra-domain case. Across design domains, a configured protocol on
+   * one of the link endpoints is required; router-wide process declarations alone do not make every
+   * external link an IGP adjacency.
    */
   private static void addIgpPeers(
       Topology topology,
@@ -165,8 +168,14 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       ProgramObject.Ref peerRef =
           new ProgramObject.Ref(
               "interface", peer.get().router(), List.of(peer.get().interfaceName()));
-      if (!byRef.containsKey(peerRef)
-          || !igpCompatible(routers.get(local.router()), routers.get(peer.get().router()))) {
+      ProgramObject peerInterface = byRef.get(peerRef);
+      if (peerInterface == null
+          || !igpCompatible(
+              routers.get(local.router()),
+              routers.get(peer.get().router()),
+              object,
+              peerInterface,
+              derived)) {
         continue;
       }
       Map<String, List<String>> values =
@@ -176,17 +185,39 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
     }
   }
 
-  private static boolean igpCompatible(ProgramObject left, ProgramObject right) {
-    if (left == null || right == null) {
+  private static boolean igpCompatible(
+      ProgramObject leftRouter,
+      ProgramObject rightRouter,
+      ProgramObject leftInterface,
+      ProgramObject rightInterface,
+      Map<ProgramObject.Ref, Map<String, List<String>>> derived) {
+    if (leftRouter == null || rightRouter == null) {
       return false;
     }
     boolean sameDesignAs =
-        designAsn(left.ref().router())
-            .flatMap(asn -> designAsn(right.ref().router()).filter(asn::equals))
+        designAsn(leftRouter.ref().router())
+            .flatMap(asn -> designAsn(rightRouter.ref().router()).filter(asn::equals))
             .isPresent();
-    boolean ospf = left.has("ospf-process") && right.has("ospf-process");
-    boolean isis = left.has("isis-process") && right.has("isis-process");
-    return sameDesignAs || ospf || isis;
+    if (sameDesignAs) {
+      return true;
+    }
+    boolean ospfProcess = leftRouter.has("ospf-process") && rightRouter.has("ospf-process");
+    boolean ospfEndpoint =
+        hasDerived(leftInterface, "ospf-effective-area", derived)
+            || hasDerived(rightInterface, "ospf-effective-area", derived);
+    boolean isisProcess = leftRouter.has("isis-process") && rightRouter.has("isis-process");
+    boolean isisEndpoint = leftInterface.has("isis-enabled") || rightInterface.has("isis-enabled");
+    return (ospfProcess && ospfEndpoint) || (isisProcess && isisEndpoint);
+  }
+
+  private static boolean hasDerived(
+      ProgramObject object,
+      String attribute,
+      Map<ProgramObject.Ref, Map<String, List<String>>> derived) {
+    return !derived
+        .getOrDefault(object.ref(), Map.of())
+        .getOrDefault(attribute, List.of())
+        .isEmpty();
   }
 
   private String routerRef(RouterId router) {
@@ -265,6 +296,18 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
     RouterId router = object.ref().router();
     return switch (function) {
       case "subnet" -> prefixOf(object.value("address"), object.value("mask"));
+      case "stub-prefix" -> {
+        Topology.Endpoint endpoint = new Topology.Endpoint(router, object.ref().key().getFirst());
+        Optional<Prefix> prefix =
+            prefixOf(object.value("address"), object.value("mask")).stream()
+                .map(Prefix::tryParse)
+                .flatMap(Optional::stream)
+                .filter(candidate -> candidate.length() < 32)
+                .findFirst();
+        yield topology.peer(endpoint).isEmpty() && prefix.isPresent()
+            ? List.of(prefix.get().toString())
+            : List.of();
+      }
       case "network-prefix" -> prefixOf(object.value("network"), object.value("mask"));
       case "link-peer" ->
           topology
@@ -332,19 +375,15 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
         yield levelOne ? List.of("true") : List.of();
       }
       case "loopback-address" -> {
-        ProgramObject lowest = null;
-        for (ProgramObject candidate : byRef.values()) {
-          if (candidate.ref().type().equals("interface")
-              && candidate.ref().key().getFirst().startsWith("Loopback")
-              && candidate.has("address")
-              && (lowest == null
-                  || candidate.ref().key().getFirst().compareTo(lowest.ref().key().getFirst())
-                      < 0)) {
-            lowest = candidate;
-          }
-        }
+        ProgramObject lowest = lowestLoopback(byRef, router).orElse(null);
         yield lowest == null ? List.of() : lowest.values("address");
       }
+      case "loopback-wildcard" ->
+          lowestLoopback(byRef, router).isPresent() ? List.of("0.0.0.0") : List.of();
+      case "ospf-loopback-required" ->
+          object.has("ospf-process") && lowestLoopback(byRef, router).isPresent()
+              ? List.of("true")
+              : List.of();
       case "ospf-coverage" -> {
         Optional<Prefix> prefix = wildcardPrefix(object.value("network"), object.value("wildcard"));
         if (prefix.isEmpty()) {
@@ -365,6 +404,23 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       case "route-map-use" -> routeMapUsed(object, byRef) ? List.of("true") : List.of();
       default -> throw new IllegalArgumentException("unknown derived function " + function);
     };
+  }
+
+  /** Returns the first numbered loopback with an address on {@code router}. */
+  private static Optional<ProgramObject> lowestLoopback(
+      Map<ProgramObject.Ref, ProgramObject> objects, RouterId router) {
+    ProgramObject lowest = null;
+    for (ProgramObject candidate : objects.values()) {
+      if (candidate.ref().router().equals(router)
+          && candidate.ref().type().equals("interface")
+          && candidate.ref().key().getFirst().startsWith("Loopback")
+          && candidate.has("address")
+          && (lowest == null
+              || candidate.ref().key().getFirst().compareTo(lowest.ref().key().getFirst()) < 0)) {
+        lowest = candidate;
+      }
+    }
+    return Optional.ofNullable(lowest);
   }
 
   /** Returns whether a route map has a typed control-plane use on its router. */
@@ -501,9 +557,40 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       case "loopback-address" -> loopbackRealisations(target, object, program);
       case "ospf-coverage" -> coverageRealisations(target, object, program);
       case "igp-enabled" -> igpRealisations(object, program);
+      case "isis-level-1" -> isisLevelOneRealisations(target, object, program);
       case "route-map-use" -> routeMapUseRealisations(target, object, program);
       default -> List.of();
     };
+  }
+
+  /**
+   * Relaxes a level-1-only IS-IS interface to the least disruptive dual-level configuration. This
+   * is the constructive complement of the derived {@code isis-level-1} guard: level-1-2 preserves
+   * level-1 reachability while making an inter-area level-2 adjacency possible.
+   */
+  private List<ProgramModel.Realisation> isisLevelOneRealisations(
+      String target, ProgramObject object, ProgramModel program) {
+    if (!target.equals("false") || !object.ref().type().equals("interface")) {
+      return List.of();
+    }
+    List<ProgramModel.Realisation> result = new ArrayList<>();
+    Production circuit = dialect.grammar().production("isis-circuit-type").orElseThrow();
+    if (object.value("isis-circuit-type").filter("level-1"::equals).isPresent()) {
+      result.add(new ProgramModel.Realisation(circuit, Map.of("level", List.of("level-1-2"))));
+    }
+    ProgramObject.Ref owner =
+        new ProgramObject.Ref(ObjectType.ROUTER, object.ref().router(), List.of());
+    program
+        .object(owner)
+        .filter(router -> router.value("isis-level").filter("level-1"::equals).isPresent())
+        .ifPresent(
+            router ->
+                result.add(
+                    new ProgramModel.Realisation(
+                        dialect.grammar().production("isis-is-type").orElseThrow(),
+                        Map.of("level", List.of("level-1-2")),
+                        owner)));
+    return List.copyOf(result);
   }
 
   /** Realises a router's loopback identity by changing Loopback0's address. */
@@ -576,6 +663,9 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
     Production attachment = dialect.grammar().production("neighbor-route-map").orElseThrow();
     for (ProgramObject neighbor : neighbors) {
       for (String direction : List.of("in", "out")) {
+        if (neighbor.has("route-map-" + direction)) {
+          continue;
+        }
         result.add(
             new ProgramModel.Realisation(
                 attachment,
@@ -583,7 +673,8 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                     "peer", neighbor.ref().key(),
                     "map", List.of(name),
                     "direction", List.of(direction)),
-                neighbor.ref()));
+                neighbor.ref(),
+                ProgramModel.Realisation.Existing.KEEP));
       }
     }
     return result;

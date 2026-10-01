@@ -30,6 +30,7 @@ import se.kth.sonar.prior.ExperienceFactor;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.report.RepairResult;
 import se.kth.sonar.search.IncidenceRegion;
+import se.kth.sonar.search.MeshRegion;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
@@ -231,6 +232,7 @@ public final class RepairEngine implements Repairer {
       List<VerificationService.Attempt> attempts =
           components.verifier().attemptAll(snapshots, problem.specifications());
       List<Adoption.Verified> improvements = new ArrayList<>();
+      List<Adoption.Verified> mixedImprovements = new ArrayList<>();
       Set<ContentHash> tested = new LinkedHashSet<>();
       for (int at = 0; at < batch.size(); at++) {
         Hypothesis hypothesis = batch.get(at);
@@ -249,9 +251,13 @@ public final class RepairEngine implements Repairer {
                 now(), id, hypothesis, verification, change, dependency(hypothesis)));
         TraceSink.emit(new TraceEvent.Tried(id, hypothesis, verification, change));
         tested.add(hypothesis.id());
-        if (change == Verdict.Change.IMPROVEMENT) {
+        if (verification.verdict().improvesOn(epoch.state().verification().verdict())) {
           improvements.add(new Adoption.Verified(hypothesis, verification));
         } else if (change == Verdict.Change.MIXED) {
+          if (verification.verdict().unresolved().size()
+              < epoch.state().verification().verdict().unresolved().size()) {
+            mixedImprovements.add(new Adoption.Verified(hypothesis, verification));
+          }
           for (ProgramObject.Ref object : objectsOf(region)) {
             nearMisses.merge(object, 1, Integer::sum);
           }
@@ -262,8 +268,20 @@ public final class RepairEngine implements Repairer {
               ? Optional.empty()
               : components.adoption().adopt(epoch.state(), improvements);
       if (adoption.isPresent()) {
+        if (!adoption.get().verification().verdict().solved()) {
+          int beforeReplacement = now();
+          Optional<RepairResult.Stop> replacement = replaceCounterfactually(improvements, true);
+          if (replacement.isPresent() || now() != beforeReplacement) {
+            return replacement;
+          }
+        }
         adopt(adoption.get());
         return Optional.empty();
+      }
+      int beforeReplacement = now();
+      Optional<RepairResult.Stop> replacement = replaceCounterfactually(mixedImprovements, false);
+      if (replacement.isPresent() || now() != beforeReplacement) {
+        return replacement;
       }
       double testedMass =
           admitted
@@ -277,10 +295,58 @@ public final class RepairEngine implements Repairer {
       return Optional.empty();
     }
 
+    /**
+     * Replaces one earlier greedy improvement when a mixed candidate becomes a clean improvement
+     * without it.
+     */
+    private Optional<RepairResult.Stop> replaceCounterfactually(
+        List<Adoption.Verified> candidates, boolean requireCandidateDominance) {
+      if (candidates.isEmpty() || adopted.isEmpty()) {
+        return Optional.empty();
+      }
+      List<Adoption.Verified> ordered =
+          candidates.stream()
+              .sorted(
+                  java.util.Comparator.comparingInt(
+                          (Adoption.Verified candidate) ->
+                              candidate.verification().verdict().unresolved().size())
+                      .thenComparing(candidate -> candidate.hypothesis().support())
+                      .thenComparingInt(candidate -> candidate.hypothesis().cost())
+                      .thenComparing(candidate -> candidate.hypothesis().id()))
+              .limit(1)
+              .toList();
+      for (Adoption.Verified candidate : ordered) {
+        for (CounterfactualReplacement.Alternative alternative :
+            CounterfactualReplacement.alternatives(
+                problem.initial(), adopted, candidate.hypothesis())) {
+          if (!affordable(alternative.snapshot())) {
+            return Optional.of(
+                new RepairResult.Stop.BudgetExhausted(Budget.Resource.VERIFICATIONS));
+          }
+          Verification verification = verify(alternative.snapshot());
+          if (!verification.verdict().improvesOn(epoch.state().verification().verdict())
+              || (requireCandidateDominance
+                  && !verification.verdict().improvesOn(candidate.verification().verdict()))) {
+            continue;
+          }
+          adopted.clear();
+          adopted.addAll(alternative.history());
+          advance(List.of(candidate.hypothesis()), alternative.snapshot(), verification);
+          return Optional.empty();
+        }
+      }
+      return Optional.empty();
+    }
+
     private void adopt(Adoption.Adopted adoption) {
-      epoch = epochs.advance(epoch, adoption.snapshot(), adoption.verification());
       adoption.hypotheses().forEach(hypothesis -> adopted.add(hypothesis.transaction()));
-      TraceSink.emit(new TraceEvent.Adopted(now(), adoption.hypotheses(), adoption.verification()));
+      advance(adoption.hypotheses(), adoption.snapshot(), adoption.verification());
+    }
+
+    private void advance(
+        List<Hypothesis> hypotheses, Snapshot snapshot, Verification verification) {
+      epoch = epochs.advance(epoch, snapshot, verification);
+      TraceSink.emit(new TraceEvent.Adopted(now(), hypotheses, verification));
       nearMisses.clear();
       if (epoch.state().solved()) {
         return;
@@ -340,10 +406,12 @@ public final class RepairEngine implements Repairer {
         case SiteRegion site -> Set.of(site.site());
         case RelationRegion relation -> Set.copyOf(relation.instance().roles().values());
         case IncidenceRegion incidence -> incidence.incidence().objects();
+        case MeshRegion mesh -> mesh.mesh().objects();
         case TransferRegion transfer -> {
           Set<ProgramObject.Ref> objects = new LinkedHashSet<>();
           objects.add(transfer.transfer().policy());
           objects.addAll(transfer.transfer().blockers());
+          transfer.transfer().attachment().ifPresent(item -> objects.add(item.neighbor()));
           yield Set.copyOf(objects);
         }
       };

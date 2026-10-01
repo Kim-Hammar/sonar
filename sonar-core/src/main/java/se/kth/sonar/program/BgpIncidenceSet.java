@@ -103,9 +103,11 @@ public record BgpIncidenceSet(
    * Infers incomplete incidence sets relevant to {@code relevant} routers.
    *
    * <p>At least two incomplete client incidences are normally required; a single missing direction
-   * is already represented by the ordinary {@code bgp-session} relation. A single processless
-   * client is retained because its process definition and both session directions form one
-   * conjunctive object. A client is retained only when formal verifier evidence implicates it.
+   * is already represented by the ordinary {@code bgp-session} relation. A single incidence is
+   * retained when both directions are absent, because then no existing neighbor can instantiate
+   * that ordinary relation. A single processless client is retained for the same reason: its
+   * process definition and both session directions form one conjunctive object. A client is
+   * retained only when formal verifier evidence implicates it.
    */
   public static List<BgpIncidenceSet> infer(ProgramModel program, Collection<RouterId> relevant) {
     return infer(program, relevant, Set.of());
@@ -146,6 +148,7 @@ public record BgpIncidenceSet(
         }
         List<ProgramObject.Ref> incompleteClients = new ArrayList<>();
         List<Direction> incompleteDirections = new ArrayList<>();
+        boolean whollyMissing = false;
         for (ProgramObject client : clients) {
           if (!implicated.contains(client.ref().router())) {
             continue;
@@ -156,18 +159,35 @@ public record BgpIncidenceSet(
           if (!pair.isEmpty()) {
             incompleteClients.add(client.ref());
             incompleteDirections.addAll(pair);
+            whollyMissing |= pair.size() == 2 && absent(program, reflector, client);
           }
         }
         boolean missingProcess =
             incompleteClients.stream()
                 .map(client -> routers.get(client.router()))
                 .anyMatch(client -> client != null && client.value("bgp-asn").isEmpty());
-        if (!incompleteDirections.isEmpty() && (incompleteClients.size() >= 2 || missingProcess)) {
+        if (!incompleteDirections.isEmpty()
+            && (incompleteClients.size() >= 2 || missingProcess || whollyMissing)) {
           result.add(new BgpIncidenceSet(reflector.ref(), incompleteClients, incompleteDirections));
         }
       }
     }
     return List.copyOf(result);
+  }
+
+  /** Returns whether neither router has a neighbor object naming the other's loopback. */
+  private static boolean absent(ProgramModel program, ProgramObject first, ProgramObject second) {
+    String firstPeer = second.value("loopback-address").orElse("");
+    String secondPeer = first.value("loopback-address").orElse("");
+    return !firstPeer.isEmpty()
+        && !secondPeer.isEmpty()
+        && program
+            .object(new ProgramObject.Ref("bgp-neighbor", first.ref().router(), List.of(firstPeer)))
+            .isEmpty()
+        && program
+            .object(
+                new ProgramObject.Ref("bgp-neighbor", second.ref().router(), List.of(secondPeer)))
+            .isEmpty();
   }
 
   private static Optional<Direction> direction(
@@ -213,10 +233,10 @@ public record BgpIncidenceSet(
       ProgramObject source,
       boolean targetReflector) {
     List<Group> local = observedGroups(program, routers, source, targetReflector);
-    if (!local.isEmpty() || source.has("bgp-asn")) {
+    if (!local.isEmpty()) {
       return local;
     }
-    String sourceAs = source.value("design-asn").orElse("");
+    String sourceAs = source.value("bgp-asn").or(() -> source.value("design-asn")).orElse("");
     if (sourceAs.isEmpty()) {
       return List.of();
     }

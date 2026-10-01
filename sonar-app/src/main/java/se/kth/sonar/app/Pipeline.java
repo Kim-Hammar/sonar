@@ -30,9 +30,12 @@ import se.kth.sonar.jev.HttpTransport;
 import se.kth.sonar.jev.JevDecisionModel;
 import se.kth.sonar.jev.JevRequestCodec;
 import se.kth.sonar.policy.GreedyPolicy;
+import se.kth.sonar.prior.AgreementOutlierFactor;
 import se.kth.sonar.prior.CounterexampleFactor;
 import se.kth.sonar.prior.DropFactor;
+import se.kth.sonar.prior.FirstMatchDominanceFactor;
 import se.kth.sonar.prior.FrontierFactor;
+import se.kth.sonar.prior.PathDifferentialFactor;
 import se.kth.sonar.prior.PolicyCutFactor;
 import se.kth.sonar.prior.RegionPrior;
 import se.kth.sonar.prior.RelationFactor;
@@ -192,8 +195,11 @@ public final class Pipeline implements AutoCloseable {
             List.of(
                 new SpectrumFactor(),
                 new RelationFactor(programs.evaluator()),
+                new AgreementOutlierFactor(programs.evaluator()),
+                new FirstMatchDominanceFactor(),
                 new CounterexampleFactor(),
                 new PolicyCutFactor(),
+                new PathDifferentialFactor(),
                 new FrontierFactor(),
                 new DropFactor()));
     return new EpochBuilder(programs, spaces, prior);

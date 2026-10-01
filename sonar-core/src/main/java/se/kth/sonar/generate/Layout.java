@@ -12,11 +12,16 @@ import se.kth.sonar.grammar.Statement;
 /** Where the statements of one router sit: which lines a block spans and how they are indented. */
 final class Layout {
   private final List<Statement> statements;
+  private final int lastLine;
   private final Map<Integer, Statement> byLine = new HashMap<>();
 
-  Layout(List<Statement> statements) {
+  Layout(List<Statement> statements, int lastLine) {
     this.statements = statements;
+    this.lastLine = lastLine;
     statements.forEach(statement -> byLine.put(statement.span().first(), statement));
+    if (!statements.isEmpty() && statements.getLast().span().last() > lastLine) {
+      throw new IllegalArgumentException("statements extend beyond the configuration text");
+    }
   }
 
   List<Statement> statements() {
@@ -62,9 +67,9 @@ final class Layout {
     return false;
   }
 
-  /** Returns the last line of the router's text as the statements know it. */
+  /** Returns the last line of the router's text, including unmatched trailing lines. */
   int last() {
-    return statements.isEmpty() ? 0 : statements.getLast().span().first();
+    return lastLine;
   }
 
   /** Returns the indentation of statements inside the block opened at {@code opener}. */
