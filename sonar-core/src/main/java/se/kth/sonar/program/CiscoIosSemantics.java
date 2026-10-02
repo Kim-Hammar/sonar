@@ -41,6 +41,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
           "design-asn",
           "effective-remote-as",
           "igp-enabled",
+          "igp-foreign-peer",
           "igp-peer",
           "isis-area",
           "isis-attached",
@@ -203,7 +204,9 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
    * Adds the peer of every interface whose physical link is typed as an IGP relation. A design-AS
    * equality types the ordinary intra-domain case. Across design domains, a configured protocol on
    * one of the link endpoints is required; router-wide process declarations alone do not make every
-   * external link an IGP adjacency.
+   * external link an IGP adjacency. Such a peer across domains is a foreign peer: an IGP adjacency
+   * there is the exception, so a link that has one on one end only is as likely to lose it there as
+   * to gain it on the other.
    */
   private static void addIgpPeers(
       Topology topology,
@@ -242,7 +245,11 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       }
       Map<String, List<String>> values =
           new LinkedHashMap<>(derived.getOrDefault(object.ref(), Map.of()));
-      values.put("igp-peer", List.of(peerRef.toString()));
+      boolean foreign =
+          designAsn(local.router())
+              .flatMap(asn -> designAsn(peer.get().router()).filter(other -> !other.equals(asn)))
+              .isPresent();
+      values.put(foreign ? "igp-foreign-peer" : "igp-peer", List.of(peerRef.toString()));
       derived.put(object.ref(), Map.copyOf(values));
     }
   }
@@ -385,7 +392,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                           .toString())
               .map(List::of)
               .orElse(List.of());
-      case "igp-peer", "isis-attached" -> List.of();
+      case "igp-peer", "igp-foreign-peer", "isis-attached" -> List.of();
       case "effective-remote-as" -> {
         if (object.has("remote-as")) {
           yield object.values("remote-as");
@@ -661,7 +668,10 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       case "address-owner" -> peerRealisations(target, object, program);
       case "loopback-address" -> loopbackRealisations(target, object, program);
       case "ospf-coverage" -> coverageRealisations(target, object, program);
-      case "igp-enabled" -> igpRealisations(object, program);
+      case "igp-enabled" ->
+          target.equals("false")
+              ? igpExclusions(object, program)
+              : igpRealisations(object, program);
       case "isis-attached" -> isisAttachmentRealisations(object, program);
       case "isis-level-1" -> isisLevelOneRealisations(target, object, program);
       case "route-map-use" -> routeMapUseRealisations(target, object, program);
@@ -796,7 +806,26 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
     Production attachment = dialect.grammar().production("neighbor-route-map").orElseThrow();
     for (ProgramObject neighbor : neighbors) {
       for (String direction : List.of("in", "out")) {
-        if (neighbor.has("route-map-" + direction)) {
+        Optional<String> attached = neighbor.value("route-map-" + direction);
+        String foreign = direction.equals("in") ? "export-attributes" : "import-attributes";
+        if (attached.isPresent()
+            && !routeMap.has(foreign)
+            && broken(program, router, attached.get())) {
+          attachmentStatement(program, neighbor, direction)
+              .ifPresent(
+                  statement ->
+                      result.add(
+                          0,
+                          new ProgramModel.Realisation(
+                              attachment,
+                              Map.of(
+                                  "peer", neighbor.ref().key(),
+                                  "map", List.of(name),
+                                  "direction", List.of(direction)),
+                              neighbor.ref(),
+                              statement)));
+        }
+        if (attached.isPresent()) {
           continue;
         }
         result.add(
@@ -811,6 +840,40 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       }
     }
     return result;
+  }
+
+  /**
+   * Returns whether the route map {@code name} on {@code router} sends routes to a next hop that no
+   * router owns, which no session it is attached to can use.
+   */
+  private static boolean broken(ProgramModel program, RouterId router, String name) {
+    String reference =
+        ProgramObject.Ref.isReference(name, "route-map")
+            ? ProgramObject.Ref.parse(name).key().getFirst()
+            : name;
+    return program.objectsOf(router).stream()
+        .filter(object -> object.ref().type().equals("route-map-entry"))
+        .filter(object -> object.ref().key().getFirst().equals(reference))
+        .anyMatch(entry -> entry.has("next-hop") && !entry.has("next-hop-router"));
+  }
+
+  /**
+   * Returns the span of the statement that attaches {@code neighbor}'s map in {@code direction}.
+   */
+  private static Optional<SourceSpan> attachmentStatement(
+      ProgramModel program, ProgramObject neighbor, String direction) {
+    Set<SourceSpan> spans = new HashSet<>(neighbor.statements());
+    return program.statements(neighbor.ref().router()).stream()
+        .filter(statement -> spans.contains(statement.span()))
+        .filter(
+            statement ->
+                statement
+                    .match()
+                    .filter(match -> match.production().id().equals("neighbor-route-map"))
+                    .filter(match -> match.values("direction").equals(List.of(direction)))
+                    .isPresent())
+        .map(Statement::span)
+        .findFirst();
   }
 
   /** Returns whether a neighbor address is the address at the far end of a physical link. */
@@ -889,6 +952,62 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                         dialect.grammar().production("ip-router-isis").orElseThrow(),
                         Map.of("process", List.of(process)))));
     return result;
+  }
+
+  /**
+   * Takes an interface out of OSPF by narrowing each network statement that covers it to the
+   * largest block of the statement's range that still covers the statement's other interfaces and
+   * not this one. A statement that covers nothing else has no such block and is left to deletion.
+   */
+  private List<ProgramModel.Realisation> igpExclusions(ProgramObject object, ProgramModel program) {
+    Optional<Ipv4> address = object.value("address").flatMap(Ipv4::tryParse);
+    if (address.isEmpty()) {
+      return List.of();
+    }
+    RouterId router = object.ref().router();
+    List<Ipv4> others = new ArrayList<>();
+    for (ProgramObject other : program.objectsOf(router)) {
+      if (other.ref().type().equals("interface") && !other.ref().equals(object.ref())) {
+        other.value("address").flatMap(Ipv4::tryParse).ifPresent(others::add);
+      }
+    }
+    List<ProgramModel.Realisation> result = new ArrayList<>();
+    ProgramObject.Ref owner = new ProgramObject.Ref(ObjectType.ROUTER, router, List.of());
+    for (OspfNetwork network : ospfNetworks(program.statements(router))) {
+      if (!network.prefix().contains(address.get())) {
+        continue;
+      }
+      List<Ipv4> covered = others.stream().filter(network.prefix()::contains).toList();
+      for (int length = network.prefix().length() + 1;
+          length <= 32 && !covered.isEmpty();
+          length++) {
+        Ipv4 mask = Ipv4.mask(length);
+        Ipv4 block = covered.getFirst().and(mask);
+        if (covered.stream().allMatch(other -> other.and(mask).equals(block))
+            && !address.get().and(mask).equals(block)) {
+          result.add(
+              new ProgramModel.Realisation(
+                  dialect.grammar().production("ospf-network").orElseThrow(),
+                  Map.of(
+                      "network",
+                      List.of(block.toString()),
+                      "wildcard",
+                      List.of(wildcard(length).toString())),
+                  owner,
+                  network.statement()));
+          break;
+        }
+        if (!covered.stream().allMatch(other -> other.and(mask).equals(block))) {
+          break;
+        }
+      }
+    }
+    return List.copyOf(result);
+  }
+
+  /** Returns the wildcard of a prefix of {@code length} bits. */
+  private static Ipv4 wildcard(int length) {
+    return new Ipv4(~Ipv4.mask(length).bits());
   }
 
   /**

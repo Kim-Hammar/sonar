@@ -40,6 +40,7 @@ object interface
   attribute ospf-effective-area derived ospf-area area
   attribute link-peer derived link-peer ref interface
   attribute igp-peer derived igp-peer ref interface
+  attribute igp-foreign-peer derived igp-foreign-peer ref interface
   attribute igp-enabled derived igp-enabled flag
   attribute isis-level-1 derived isis-level-1 flag
 
@@ -187,6 +188,7 @@ relation link symmetric
   require hard equal a.subnet b.subnet
   require soft absent a.shutdown
   require soft exists a.igp-enabled when a.igp-peer
+  require soft agree a.igp-enabled b.igp-enabled when a.igp-foreign-peer
   require soft agree a.ospf-effective-area b.ospf-effective-area
   require soft agree a.ospf-cost b.ospf-cost
   require soft agree a.ospf-network-type b.ospf-network-type

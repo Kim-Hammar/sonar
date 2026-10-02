@@ -544,6 +544,80 @@ class GenerationTest {
   }
 
   @Test
+  void aBgpPolicyPathTurnsTheDenyClauseThatDecidesTheMissingAdvertisement() {
+    RouterId sender = RouterId.of("1_as65006_sender");
+    RouterId receiver = RouterId.of("2_as65001_receiver");
+    Prefix destination = Prefix.parse("10.200.0.0/24");
+    String senderConfig =
+        """
+        hostname sender
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.254
+        ip prefix-list EXPORT seq 20 permit 10.200.0.0/24
+        route-map OUT deny 100
+         match ip address prefix-list EXPORT
+        router bgp 65006
+         neighbor 10.1.0.1 remote-as 65001
+         address-family ipv4
+          neighbor 10.1.0.1 activate
+         exit-address-family
+        """;
+    String receiverConfig =
+        """
+        hostname receiver
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        route-map IN permit 100
+        router bgp 65001
+         neighbor 10.1.0.0 remote-as 65006
+         address-family ipv4
+          neighbor 10.1.0.0 activate
+          neighbor 10.1.0.0 route-map IN in
+         exit-address-family
+        """;
+    Snapshot snapshot =
+        Snapshot.of(Map.of(sender + ".cfg", senderConfig, receiver + ".cfg", receiverConfig));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(sender, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(receiver, "GigabitEthernet0/0"))));
+    ProgramModel program = programs.model(snapshot, topology);
+    Specification missing =
+        new Specification(
+            new ForwardingPredicate.Reachability(receiver, destination),
+            Specification.Status.parse("broken_removed"));
+    Verification verification =
+        new Verification(
+            snapshot.id(),
+            new Verdict(List.of(missing), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    missing.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(receiver), DataPlaneEvidence.Disposition.NO_ROUTE))),
+                Map.of(destination, Set.of(sender)),
+                Map.of()));
+    ProgramObject.Ref neighbor =
+        new ProgramObject.Ref("bgp-neighbor", receiver, List.of("10.1.0.0"));
+
+    List<Hypothesis> hypotheses =
+        new BgpPolicyPathGenerator(seeds).generate(program, verification, neighbor);
+
+    assertThat(hypotheses)
+        .anyMatch(
+            hypothesis -> {
+              String repaired =
+                  snapshot.patch(hypothesis.transaction()).after().text(sender).text();
+              return repaired.contains("route-map OUT permit 100")
+                  && repaired.contains("neighbor 10.1.0.1 route-map OUT out");
+            });
+  }
+
+  @Test
   void aForbiddenFlowCutPreservesAnAlreadyFixedAdvertisementAtomically() {
     RouterId local = RouterId.of("1_as65006_local");
     RouterId remote = RouterId.of("2_as65001_remote");
@@ -2130,6 +2204,130 @@ class GenerationTest {
    * Each end already has one interface with its own cost, and the activated link adds a second: the
    * counts below are of each cost on each router.
    */
+  @Test
+  void anUnusedPolicyReplacesAnAttachedOneThatSendsRoutesToANextHopNobodyOwns() {
+    RouterId peer = RouterId.of("2_as65002_r2");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                ONE + ".cfg",
+                """
+                hostname r1
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.0 255.255.255.254
+                route-map BROKEN permit 10
+                 set ip next-hop 203.0.113.1
+                route-map EXPORT permit 10
+                 set metric 20
+                router bgp 65001
+                 neighbor 10.1.0.1 remote-as 65002
+                 address-family ipv4
+                  neighbor 10.1.0.1 activate
+                  neighbor 10.1.0.1 route-map BROKEN out
+                 exit-address-family
+                """,
+                peer + ".cfg",
+                """
+                hostname r2
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.1 255.255.255.254
+                router bgp 65002
+                 neighbor 10.1.0.0 remote-as 65001
+                """));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(ONE, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(peer, "GigabitEthernet0/0"))));
+    ProgramModel program = programs.model(snapshot, topology);
+    RelationInstance liveness =
+        program.instances("route-map-liveness").stream()
+            .filter(instance -> instance.roles().get("map").key().getFirst().equals("EXPORT"))
+            .findFirst()
+            .orElseThrow();
+
+    List<String> repaired =
+        closure
+            .close(
+                program,
+                new Verification(
+                    snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none()),
+                List.of(),
+                Set.of(new ClosureEngine.Obligation(liveness, liveness.violated().getFirst())))
+            .stream()
+            .map(hypothesis -> snapshot.patch(hypothesis.transaction()).after().text(ONE).text())
+            .toList();
+
+    assertThat(repaired)
+        .anyMatch(
+            text ->
+                text.contains("neighbor 10.1.0.1 route-map EXPORT out")
+                    && !text.contains("neighbor 10.1.0.1 route-map BROKEN out"));
+  }
+
+  @Test
+  void aLinkWithIgpOnOneEndCanBeRepairedByNarrowingTheStatementThatCoversIt() {
+    RouterId peer = RouterId.of("2_as65002_r2");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                ONE + ".cfg",
+                """
+                hostname r1
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.0 255.255.255.254
+                interface GigabitEthernet0/1
+                 ip address 10.1.0.2 255.255.255.254
+                router ospf 1
+                 network 10.1.0.0 0.0.0.3 area 0
+                """,
+                peer + ".cfg",
+                """
+                hostname r2
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.3 255.255.255.254
+                router ospf 1
+                """));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(ONE, "GigabitEthernet0/1"),
+                    new Topology.Endpoint(peer, "GigabitEthernet0/0"))));
+    ProgramModel program = programs.model(snapshot, topology);
+    RelationInstance link =
+        program.instances("link").stream()
+            .filter(instance -> instance.roles().get("a").router().equals(ONE))
+            .findFirst()
+            .orElseThrow();
+    Requirement agree =
+        link.violated().stream()
+            .filter(requirement -> requirement.text().contains("agree a.igp-enabled"))
+            .findFirst()
+            .orElseThrow();
+
+    List<String> repaired =
+        closure
+            .close(
+                program,
+                new Verification(
+                    snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none()),
+                List.of(),
+                Set.of(new ClosureEngine.Obligation(link, agree)))
+            .stream()
+            .map(hypothesis -> snapshot.patch(hypothesis.transaction()).after())
+            .map(after -> after.text(ONE).text() + after.text(peer).text())
+            .toList();
+
+    assertThat(repaired)
+        .as("either r2 joins OSPF on the link, or r1's statement stops covering it")
+        .anyMatch(text -> text.contains("network 10.1.0.0 0.0.0.1 area 0"))
+        .anyMatch(text -> text.contains("ip ospf 1 area 0"));
+  }
+
   @Test
   void anActivatedLinkFirstAgreesOnACostAndOffersTheCostsBothEndsKnow() {
     RouterId firstId = RouterId.of("1_as65001_r1");

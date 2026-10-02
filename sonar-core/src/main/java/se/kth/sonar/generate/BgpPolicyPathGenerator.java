@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.grammar.Production;
@@ -36,9 +37,10 @@ public final class BgpPolicyPathGenerator {
    *
    * <p>The verifier establishes the direction: the peer holds a route that the receiver lacks.
    * Program analysis retains only route maps that permit an observed missing destination, either
-   * already or after completing one prefix-list dependency in the same transaction. Destinations
-   * are closed independently because distinct advertisements crossing one session need not use the
-   * same policy path. The all-destination closure is retained when it exists.
+   * already, after completing one prefix-list dependency in the same transaction, or after turning
+   * to permit the one deny clause that decides every destination by a prefix list. Destinations are
+   * closed independently because distinct advertisements crossing one session need not use the same
+   * policy path. The all-destination closure is retained when it exists.
    */
   public List<Hypothesis> generate(
       ProgramModel program, Verification verification, ProgramObject.Ref receiverSite) {
@@ -166,12 +168,67 @@ public final class BgpPolicyPathGenerator {
           choices.add(new PolicyChoice(object, completion.operators()));
         }
       }
+      deciding(program, object, destinations)
+          .flatMap(clause -> statementOf(program, clause))
+          .ifPresent(
+              header ->
+                  choices.add(
+                      new PolicyChoice(
+                          object,
+                          List.of(
+                              new EditOperator.ReplaceSlots(
+                                  header,
+                                  "action",
+                                  List.of("permit"),
+                                  new Provenance.Inferred(
+                                      "deciding deny clause of a policy path"))))));
     }
     choices.sort(
         Comparator.comparing((PolicyChoice choice) -> choice.routeMap().has("used"))
             .thenComparing(choice -> choice.routeMap().ref().toString())
             .thenComparingInt(choice -> choice.prerequisites().size()));
     return List.copyOf(choices);
+  }
+
+  /**
+   * Returns the clause of {@code routeMap} that denies every destination, when one clause decides
+   * them all and decides them by a prefix list: a clause written to match these routes whose action
+   * is the only thing that stops them.
+   */
+  private static Optional<ProgramObject> deciding(
+      ProgramModel program, ProgramObject routeMap, Set<Prefix> destinations) {
+    ProgramObject clause = null;
+    for (Prefix destination : destinations) {
+      List<ProgramObject> deciding =
+          RouteMapEvaluation.decidingClauses(program, routeMap.ref(), destination);
+      if (deciding.size() != 1) {
+        return Optional.empty();
+      }
+      ProgramObject only = deciding.getFirst();
+      if (only.value("action").filter("deny"::equals).isEmpty()
+          || only.values("match-prefix-list").isEmpty()
+          || (clause != null && !clause.ref().equals(only.ref()))) {
+        return Optional.empty();
+      }
+      clause = only;
+    }
+    return Optional.ofNullable(clause);
+  }
+
+  private static Optional<Statement> statementOf(ProgramModel program, ProgramObject entry) {
+    for (var span : entry.statements()) {
+      for (Statement statement : program.statements(span.router())) {
+        if (statement.span().equals(span)
+            && statement
+                .match()
+                .map(match -> match.production().id())
+                .orElse("")
+                .equals("route-map")) {
+          return Optional.of(statement);
+        }
+      }
+    }
+    return Optional.empty();
   }
 
   private record PolicyChoice(ProgramObject routeMap, List<EditOperator> prerequisites) {
