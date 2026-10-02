@@ -30,6 +30,7 @@ import se.kth.sonar.generate.LinkProfileGenerator;
 import se.kth.sonar.generate.OspfBoundaryOrigination;
 import se.kth.sonar.generate.PolicyAttachmentPermutation;
 import se.kth.sonar.generate.PolicyCutGenerator;
+import se.kth.sonar.generate.PolicyDirectionRepair;
 import se.kth.sonar.generate.ProtocolTransferGenerator;
 import se.kth.sonar.generate.SeedGenerator;
 import se.kth.sonar.network.Prefix;
@@ -73,6 +74,7 @@ public final class SearchSpaceBuilder {
   private final BgpSessionCutGenerator sessionCuts;
   private final ProtocolTransferGenerator transfers;
   private final PolicyCutGenerator policyCuts;
+  private final PolicyDirectionRepair policyDirections;
   private final ContentCache<Map<ProgramObject.Ref, Set<Prefix>>> cutTargets =
       new ContentCache<>(64);
   private final SearchSpace.Capacity capacity;
@@ -97,6 +99,7 @@ public final class SearchSpaceBuilder {
     this.sessionCuts = new BgpSessionCutGenerator();
     this.transfers = new ProtocolTransferGenerator(closure, seeds);
     this.policyCuts = new PolicyCutGenerator(seeds);
+    this.policyDirections = new PolicyDirectionRepair(seeds);
     this.capacity = Objects.requireNonNull(capacity, "capacity");
     this.bounds = Objects.requireNonNull(bounds, "bounds");
     this.context = Objects.requireNonNull(context, "context");
@@ -322,7 +325,11 @@ public final class SearchSpaceBuilder {
     return SearchSpace.partitioned(regions, capacity);
   }
 
-  /** Returns {@code region} with its admitted candidates. */
+  /**
+   * Returns {@code region} with its admitted candidates. An edit that several analyses derive is
+   * one candidate, with the strongest support any of them gives it: a larger candidate that
+   * contains the edit is then never better supported than the edit alone.
+   */
   public Region expand(Region region, RepairState state) {
     List<Hypothesis> generated =
         new ArrayList<>(
@@ -348,6 +355,7 @@ public final class SearchSpaceBuilder {
                             .getOrDefault(site.site(), Set.of())));
                 all.addAll(FirstMatchRepair.generate(state.program(), site.site()));
                 all.addAll(PolicyAttachmentPermutation.generate(state.program(), site.site()));
+                all.addAll(policyDirections.generate(state.program(), site.site()));
                 all.addAll(
                     OspfBoundaryOrigination.generate(
                         state.program(), state.verification(), site.site(), seeds));
@@ -400,8 +408,18 @@ public final class SearchSpaceBuilder {
                 }
                 all.addAll(
                     closure.close(state.program(), state.verification(), List.of(), obligations));
+                if (relation.instance().relation().equals("link")) {
+                  all.addAll(
+                      InterdomainTransferClosure.closeLink(
+                          state.program(), relation.instance(), List.copyOf(all)));
+                }
                 if (relation.instance().relation().equals("route-map-liveness")) {
                   all.addAll(policyPermutations(state.program(), relation.instance()));
+                }
+                if (relation.instance().relation().equals("bgp-policy")) {
+                  ProgramObject.Ref neighbor = relation.instance().roles().get("neighbor");
+                  all.addAll(PolicyAttachmentPermutation.generate(state.program(), neighbor));
+                  all.addAll(policyDirections.generate(state.program(), neighbor));
                 }
                 yield all;
               }
@@ -416,7 +434,10 @@ public final class SearchSpaceBuilder {
             IdentityRefactoring.closeAll(state.program(), state.verification(), generated));
     Map<ContentHash, Hypothesis> unique = new LinkedHashMap<>();
     for (Hypothesis hypothesis : generated) {
-      unique.putIfAbsent(hypothesis.id(), hypothesis);
+      unique.merge(
+          hypothesis.id(),
+          hypothesis,
+          (first, later) -> later.support().compareTo(first.support()) < 0 ? later : first);
     }
     List<Hypothesis> admitted =
         new ArrayList<>(admissibility.admit(state, new ArrayList<>(unique.values())));
@@ -591,7 +612,9 @@ public final class SearchSpaceBuilder {
 
   /**
    * Returns the search space of {@code state}, keeping the admitted candidates of every region of
-   * {@code space} that reads the same configurations and whose candidates still apply.
+   * {@code space} that reads the same configurations and whose candidates still apply: all of them,
+   * those tried in the earlier state included, since the network they are tried against has
+   * changed.
    */
   public SearchSpace refresh(SearchSpace space, RepairState state) {
     SearchSpace rebuilt = build(state);
@@ -601,8 +624,8 @@ public final class SearchSpaceBuilder {
       if (earlier.isPresent()
           && earlier.get().reads().equals(region.reads())
           && earlier.get().hypotheses() instanceof Region.Hypotheses.Admitted admitted
-          && admitted.list().stream().allMatch(h -> applies(h, state))) {
-        regions.add(region.withHypotheses(admitted));
+          && admitted.restored().list().stream().allMatch(h -> applies(h, state))) {
+        regions.add(region.withHypotheses(admitted.restored()));
       } else {
         regions.add(region);
       }

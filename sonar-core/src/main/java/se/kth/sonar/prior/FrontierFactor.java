@@ -30,10 +30,11 @@ import se.kth.sonar.verify.DataPlaneEvidence;
  * links to routers that do have an entry or originate the destination. Each distinct no-route
  * observation, one per source and destination, counts once for every frontier link it reaches. The
  * causal program slice of that link is its two interface objects and the configuration objects they
- * reference, such as attached ACLs. A region in the slice of a frontier reached by {@code n}
- * observations weighs the Jeffreys odds {@code (n + 1/2) / (1/2)}, multiplied by the finite-space
- * reduction from every physical link to the distinct frontier links the verifier observed. Other
- * regions weigh one.
+ * reference, such as attached ACLs. A destination that is itself the subnet of a link at the
+ * frontier's far end propagates from that link's own interfaces, so the slice holds them as well. A
+ * region in the slice of a frontier reached by {@code n} observations weighs the Jeffreys odds
+ * {@code (n + 1/2) / (1/2)}, multiplied by the finite-space reduction from every physical link to
+ * the distinct frontier links the verifier observed. Other regions weigh one.
  */
 public final class FrontierFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -71,6 +72,14 @@ public final class FrontierFactor implements PriorFactor {
     Set<List<Object>> observed = new HashSet<>();
     Set<RouterEvidence.Link> observedLinks = new HashSet<>();
     Map<ProgramObject.Ref, Integer> counts = new HashMap<>();
+    Set<ProgramObject.Ref> linkEnds = new HashSet<>();
+    for (Topology.Link link : state.problem().topology().links()) {
+      for (Topology.Endpoint endpoint : List.of(link.a(), link.b())) {
+        linkEnds.add(
+            new ProgramObject.Ref(
+                "interface", endpoint.router(), List.of(endpoint.interfaceName())));
+      }
+    }
     for (Specification specification : state.verification().verdict().unresolved()) {
       ForwardingPredicate predicate = specification.predicate();
       if (!RouterEvidence.noRouteAtSource(evidence, predicate)
@@ -80,7 +89,14 @@ public final class FrontierFactor implements PriorFactor {
       for (RouterEvidence.Link link :
           owners.routeFrontier(predicate.source(), predicate.destination())) {
         observedLinks.add(link);
-        for (ProgramObject.Ref object : slice(state, link)) {
+        Set<ProgramObject.Ref> slice = new LinkedHashSet<>(slice(state, link));
+        for (ProgramObject.Ref origin : owners.origins(predicate.destination())) {
+          if (linkEnds.contains(origin)
+              && (origin.router().equals(link.first()) || origin.router().equals(link.second()))) {
+            slice.add(origin);
+          }
+        }
+        for (ProgramObject.Ref object : slice) {
           counts.merge(object, 1, Integer::sum);
         }
       }

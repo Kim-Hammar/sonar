@@ -5,14 +5,19 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.network.Topology;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
+import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.text.RouterId;
 
-/** Closes a direct BGP policy repair over first-match filters on its physical transport. */
+/**
+ * Closes a repair of a direct BGP transfer, or of the physical link that carries it, over the
+ * first-match filters on that link.
+ */
 public final class InterdomainTransferClosure {
   private InterdomainTransferClosure() {}
 
@@ -57,6 +62,43 @@ public final class InterdomainTransferClosure {
       }
     }
     return List.copyOf(result.values());
+  }
+
+  /**
+   * Returns the repairs of the physical link {@code link} combined with the transport filters that
+   * otherwise shadow them.
+   *
+   * <p>A link whose ends disagree carries nothing, so a filter on it that denies everything goes
+   * unobserved until the link is repaired, and then the repair alone trades one violation for
+   * another. Each repair is therefore also offered together with every first-match repair of the
+   * filters attached to the link's interfaces.
+   */
+  public static List<Hypothesis> closeLink(
+      ProgramModel program, RelationInstance link, List<Hypothesis> repairs) {
+    ProgramObject.Ref a = link.roles().get("a");
+    ProgramObject.Ref b = link.roles().get("b");
+    if (a == null || b == null) {
+      return List.of();
+    }
+    Map<ContentHash, Hypothesis> result = new LinkedHashMap<>();
+    for (Hypothesis blocker : blockers(program, a.router(), b.router())) {
+      for (Hypothesis repair : repairs) {
+        List<EditOperator> operators = new ArrayList<>(repair.operators());
+        operators.addAll(blocker.operators());
+        combined(program, operators)
+            .ifPresent(combined -> result.putIfAbsent(combined.id(), combined));
+      }
+    }
+    return List.copyOf(result.values());
+  }
+
+  /** Returns the candidate made of {@code operators}, unless they do not form one transaction. */
+  private static Optional<Hypothesis> combined(ProgramModel program, List<EditOperator> operators) {
+    try {
+      return Optional.of(Hypothesis.of(program.snapshot(), operators));
+    } catch (IllegalArgumentException | IllegalStateException incompatible) {
+      return Optional.empty();
+    }
   }
 
   /** Returns the direct BGP neighbors whose transport uses {@code site}. */

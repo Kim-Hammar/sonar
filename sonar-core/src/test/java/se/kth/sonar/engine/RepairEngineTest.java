@@ -53,6 +53,7 @@ import se.kth.sonar.search.SearchSpaceBuilder;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.spec.SpecificationSet;
+import se.kth.sonar.spec.Verdict;
 import se.kth.sonar.state.RepairProblem;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.text.RouterId;
@@ -235,7 +236,7 @@ class RepairEngineTest {
             new DecisionService(models, context),
             new BeliefModel(),
             new GreedyPolicy(),
-            new Adoption(verifier)));
+            new Adoption(verifier, programs)));
   }
 
   @Test
@@ -266,7 +267,7 @@ class RepairEngineTest {
     assertThat(events).startsWith("Baseline", "SpaceBuilt").contains("Decided", "Tried", "Adopted");
     long adopted = records.stream().filter(r -> r.event() instanceof TraceEvent.Adopted).count();
     assertThat(adopted).isBetween(1L, 2L);
-    assertThat(result.adopted()).hasSizeBetween(2, 3);
+    assertThat(result.adopted()).hasSizeBetween(1, 3);
   }
 
   @Test
@@ -290,10 +291,52 @@ class RepairEngineTest {
         verified.add(
             new Adoption.Verified(hypothesis, verifier.verify(snapshot, problem.specifications())));
       }
-      Adoption.Adopted adopted = new Adoption(verifier).adopt(state, verified).orElseThrow();
+      Adoption.Adopted adopted =
+          new Adoption(verifier, programs).adopt(state, verified).orElseThrow();
       assertThat(adopted.hypotheses()).containsExactlyInAnyOrder(session, area);
       assertThat(adopted.verification().verdict().solved()).isTrue();
-      assertThat(new Adoption(verifier).adopt(state, List.of(verified.getFirst()))).isEmpty();
+      assertThat(new Adoption(verifier, programs).adopt(state, List.of(verified.getFirst())))
+          .isEmpty();
+
+      List<EditOperator> renamed = new ArrayList<>(area.operators());
+      renamed.addAll(replace(state, 1, "name", "r2b").operators());
+      Hypothesis padded = Hypothesis.of(state.snapshot(), renamed);
+      verified.add(
+          new Adoption.Verified(
+              padded,
+              verifier.verify(
+                  state.snapshot().patch(padded.transaction()).after(), problem.specifications())));
+      assertThat(new Adoption(verifier, programs).adopt(state, verified).orElseThrow().hypotheses())
+          .as("the renaming resolves nothing that the area alone leaves unresolved")
+          .containsExactlyInAnyOrder(session, area);
+
+      Hypothesis renaming = replace(state, 1, "name", "r2b");
+      List<Adoption.Verified> extended = new ArrayList<>();
+      for (Hypothesis hypothesis : List.of(renaming, padded)) {
+        Snapshot snapshot = state.snapshot().patch(hypothesis.transaction()).after();
+        extended.add(
+            new Adoption.Verified(hypothesis, verifier.verify(snapshot, problem.specifications())));
+      }
+      assertThat(new Adoption(verifier, programs).adopt(state, extended).orElseThrow().hypotheses())
+          .as("the renaming alone changes nothing, so the area is adopted without it")
+          .extracting(Hypothesis::id)
+          .containsExactly(area.id());
+
+      List<EditOperator> everything = new ArrayList<>(renaming.operators());
+      everything.addAll(session.operators());
+      everything.addAll(area.operators());
+      Hypothesis overdone = Hypothesis.of(state.snapshot(), everything);
+      Adoption.Verified breaking =
+          new Adoption.Verified(
+              overdone,
+              new Verification(
+                  state.snapshot().patch(overdone.transaction()).after().id(),
+                  new Verdict(List.of(), List.of(SESSION, ADJACENCY), List.of(INTACT)),
+                  DataPlaneEvidence.none()));
+      assertThat(new Adoption(verifier, programs).part(state, breaking))
+          .as("a candidate that resolves everything and breaks something is tried by its parts")
+          .map(part -> part.hypothesis().id())
+          .contains(session.id());
     }
   }
 
@@ -323,14 +366,134 @@ class RepairEngineTest {
                 hypothesis,
                 new Verification(
                     candidate.id(),
-                    new se.kth.sonar.spec.Verdict(List.of(ADJACENCY), List.of(SESSION), List.of()),
+                    new Verdict(List.of(ADJACENCY), List.of(SESSION), List.of()),
                     DataPlaneEvidence.none())));
       }
 
-      Adoption.Adopted adopted = new Adoption(verifier).adopt(state, tied).orElseThrow();
+      Adoption.Adopted adopted = new Adoption(verifier, programs).adopt(state, tied).orElseThrow();
 
       assertThat(adopted.hypotheses()).containsExactly(decisionOrder.getFirst());
     }
+  }
+
+  @Test
+  void adoptionSetsAsideAnImprovementThatBreaksARelationAnotherKeeps() {
+    RepairProblem problem = problem();
+    Specification third =
+        new Specification(
+            new ForwardingPredicate.Reachability(TWO, Prefix.parse("10.1.0.0/31")),
+            Specification.Status.parse("broken_removed"));
+    try (ResourcePool<DataPlaneEngine> engines =
+        ResourcePool.of(1, ScriptedDataPlane::new, DataPlaneEngine::close)) {
+      ProgramService programs =
+          new ProgramService(DIALECT, new CiscoIosSemantics(DIALECT), context);
+      VerificationService verifier = new VerificationService(engines, context);
+      RepairState state =
+          RepairState.initial(
+              problem,
+              new Verification(
+                  problem.initial().id(),
+                  new Verdict(List.of(SESSION, ADJACENCY, third), List.of(), List.of()),
+                  DataPlaneEvidence.none()),
+              programs.model(problem.initial(), problem.topology()));
+      Hypothesis repair = replace(state, 8, "area", "0");
+      Hypothesis identity = replace(state, 10, "id", "10.0.0.9");
+      List<EditOperator> both = new ArrayList<>(repair.operators());
+      both.addAll(identity.operators());
+      Hypothesis extended = Hypothesis.of(state.snapshot(), both);
+      java.util.function.BiFunction<Hypothesis, List<Specification>, Adoption.Verified> verified =
+          (hypothesis, unresolved) ->
+              new Adoption.Verified(
+                  hypothesis,
+                  new Verification(
+                      state.snapshot().patch(hypothesis.transaction()).after().id(),
+                      new Verdict(unresolved, List.of(), List.of()),
+                      DataPlaneEvidence.none()));
+      Adoption adoption = new Adoption(verifier, programs);
+
+      assertThat(
+              adoption
+                  .adopt(
+                      state,
+                      List.of(
+                          verified.apply(extended, List.of(SESSION)),
+                          verified.apply(repair, List.of(SESSION, third))))
+                  .orElseThrow()
+                  .hypotheses())
+          .as("the extension gives r2 a BGP identity other than its loopback, which it had")
+          .containsExactly(repair);
+      assertThat(
+              adoption
+                  .adopt(
+                      state,
+                      List.of(
+                          verified.apply(identity, List.of(SESSION)),
+                          verified.apply(repair, List.of(SESSION, third))))
+                  .orElseThrow()
+                  .hypotheses())
+          .as("unrelated candidates: the one that leaves less unresolved, alone")
+          .containsExactly(identity);
+      assertThat(
+              adoption
+                  .adopt(
+                      state,
+                      List.of(
+                          verified.apply(extended, List.of()),
+                          verified.apply(repair, List.of(SESSION, third))))
+                  .orElseThrow()
+                  .hypotheses())
+          .containsExactly(extended);
+    }
+  }
+
+  @Test
+  void anInertEditThatCompletesARenameIsKept() {
+    RepairProblem problem = problem();
+    try (ResourcePool<DataPlaneEngine> engines =
+        ResourcePool.of(1, ScriptedDataPlane::new, DataPlaneEngine::close)) {
+      ProgramService programs =
+          new ProgramService(DIALECT, new CiscoIosSemantics(DIALECT), context);
+      VerificationService verifier = new VerificationService(engines, context);
+      RepairState state =
+          RepairState.initial(
+              problem,
+              verifier.verify(problem.initial(), problem.specifications()),
+              programs.model(problem.initial(), problem.topology()));
+      List<EditOperator> references = new ArrayList<>();
+      references.addAll(operator(state, ONE, 14, "peer", "10.0.0.9").operators());
+      references.addAll(operator(state, ONE, 16, "peer", "10.0.0.9").operators());
+      Hypothesis referenced = Hypothesis.of(state.snapshot(), references);
+      List<EditOperator> whole = new ArrayList<>(replace(state, 8, "area", "0").operators());
+      whole.addAll(operator(state, TWO, 3, "address", "10.0.0.9").operators());
+      whole.addAll(references);
+      Hypothesis renamed = Hypothesis.of(state.snapshot(), whole);
+      List<Adoption.Verified> verified = new ArrayList<>();
+      for (Hypothesis hypothesis : List.of(referenced, renamed)) {
+        Snapshot snapshot = state.snapshot().patch(hypothesis.transaction()).after();
+        verified.add(
+            new Adoption.Verified(hypothesis, verifier.verify(snapshot, problem.specifications())));
+      }
+      assertThat(verified.getFirst().verification().verdict().fixed()).isEmpty();
+
+      assertThat(new Adoption(verifier, programs).adopt(state, verified).orElseThrow().hypotheses())
+          .as("without r1's references to it, r2's new loopback would leave r1's session dangling")
+          .containsExactly(renamed);
+    }
+  }
+
+  private static Hypothesis operator(
+      RepairState state, RouterId router, int line, String slot, String value) {
+    return Hypothesis.of(
+        state.snapshot(),
+        List.of(
+            new EditOperator.ReplaceSlots(
+                state.program().statements(router).stream()
+                    .filter(statement -> statement.span().first() == line)
+                    .findFirst()
+                    .orElseThrow(),
+                slot,
+                List.of(value),
+                new Provenance.Existing())));
   }
 
   private static Hypothesis replace(RepairState state, int line, String slot, String value) {
@@ -345,6 +508,37 @@ class RepairEngineTest {
                 slot,
                 List.of(value),
                 new Provenance.Existing())));
+  }
+
+  @Test
+  void anImprovementVerifiedBeforeTheBudgetRanOutIsAdopted() throws Exception {
+    RepairProblem problem = problem();
+    for (int limit = 2; limit <= 40; limit++) {
+      List<TraceRecord> records = new CopyOnWriteArrayList<>();
+      Budget budget = Budget.builder().limit(Budget.Resource.VERIFICATIONS, limit).build();
+      RunScope scope = new RunScope("pair", budget, 1, new Cancellation());
+      RepairResult result;
+      try (ResourcePool<DataPlaneEngine> engines =
+          ResourcePool.of(1, ScriptedDataPlane::new, DataPlaneEngine::close)) {
+        RepairEngine engine = engine(engines);
+        result =
+            ScopedValue.where(RunScope.CURRENT, scope)
+                .where(TraceSink.CURRENT, (TraceSink) records::add)
+                .call(() -> engine.repair(problem));
+      }
+      int best =
+          records.stream()
+              .map(TraceRecord::event)
+              .filter(TraceEvent.Tried.class::isInstance)
+              .map(TraceEvent.Tried.class::cast)
+              .filter(tried -> tried.change() == se.kth.sonar.spec.Verdict.Change.IMPROVEMENT)
+              .mapToInt(tried -> tried.verification().verdict().unresolved().size())
+              .min()
+              .orElse(Integer.MAX_VALUE);
+      assertThat(result.verdict().unresolved().size())
+          .as("verification budget %d", limit)
+          .isLessThanOrEqualTo(best);
+    }
   }
 
   @Test

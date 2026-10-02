@@ -32,16 +32,18 @@ public record BgpSessionCut(RelationInstance session, List<Specification> target
   /**
    * Infers exact session cuts from formal path counterexamples.
    *
-   * <p>An accepted isolation counterexample identifies its first forbidden forwarding edge. An
-   * accepted waypoint counterexample identifies an alternate source-to-reflector session when the
-   * required source-to-waypoint session already exists: the alternate is a finite bypass of the
-   * exact relation named by the specification. Only reciprocal, active loopback sessions are cut.
+   * <p>A counterexample of a required isolation identifies its first forbidden forwarding edge; an
+   * isolation that must not hold forbids no edge. An accepted waypoint counterexample identifies an
+   * alternate source-to-reflector session when the required source-to-waypoint session already
+   * exists: the alternate is a finite bypass of the exact relation named by the specification. Only
+   * reciprocal, active loopback sessions are cut.
    */
   public static List<BgpSessionCut> infer(RepairState state) {
     Map<Link, LinkedHashSet<Specification>> forbidden = new LinkedHashMap<>();
     DataPlaneEvidence evidence = state.verification().evidence();
     for (Specification specification : state.verification().verdict().unresolved()) {
-      if (!(specification.predicate() instanceof ForwardingPredicate.Isolation)) {
+      if (!(specification.predicate() instanceof ForwardingPredicate.Isolation)
+          || !specification.status().expectPresent()) {
         continue;
       }
       for (DataPlaneEvidence.Trace trace :

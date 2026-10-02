@@ -16,11 +16,11 @@ import se.kth.sonar.verify.DataPlaneEvidence;
 /**
  * Weights a region by the flows dropped on its routers.
  *
- * <p>When a violated flow is denied or discarded, the router that dropped it is where the evidence
- * ends, unlike the routers it merely passed. Each distinct observation, one per source and
- * destination, counts once for the router at the end of its trace. A region editing a router that
- * dropped {@code n} observations weighs the Jeffreys odds {@code (n + 1/2) / (1/2)}; other regions
- * weigh one.
+ * <p>When a violated flow that must be delivered is denied or discarded, the router that dropped it
+ * is where the evidence ends, unlike the routers it merely passed. Each distinct observation, one
+ * per source and destination, counts once for the router at the end of its trace. A region editing
+ * a router that dropped {@code n} observations weighs the Jeffreys odds {@code (n + 1/2) / (1/2)};
+ * other regions weigh one.
  */
 public final class DropFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -58,7 +58,7 @@ public final class DropFactor implements PriorFactor {
     Map<RouterId, Integer> counts = new HashMap<>();
     for (Specification specification : state.verification().verdict().unresolved()) {
       ForwardingPredicate predicate = specification.predicate();
-      if (predicate instanceof ForwardingPredicate.Isolation) {
+      if (specification.forbidsDelivery()) {
         continue;
       }
       for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {

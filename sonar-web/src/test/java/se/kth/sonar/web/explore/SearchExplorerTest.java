@@ -93,17 +93,18 @@ class SearchExplorerTest {
             ResourcePool.of(1, ScriptedDataPlane::new, DataPlaneEngine::close);
         ResourcePool<DecisionModel> models = ResourcePool.of(1, NeverAsked::new, model -> {})) {
       VerificationService verifier = new VerificationService(engines, context);
+      EpochBuilder epochs = Pipeline.epochs(DIALECT, context);
       RepairEngine engine =
           new RepairEngine(
               new RepairEngine.Components(
-                  Pipeline.epochs(DIALECT, context),
+                  epochs,
                   verifier,
                   new DecisionProblemFactory(60_000),
                   new DecisionService(models, context),
                   new BeliefModel(),
                   (state, space, belief, budget) ->
                       new SearchPolicy.Action.Stop(new RepairResult.Stop.SearchExhausted()),
-                  new Adoption(verifier)));
+                  new Adoption(verifier, epochs.programs())));
       RepairProblem problem = repository.load(KEY.scenario(), KEY.percent());
       ScopedValue.where(TraceSink.CURRENT, (TraceSink) records::add)
           .call(() -> engine.repair(problem));
@@ -136,6 +137,7 @@ class SearchExplorerTest {
               "first-match-dominance",
               "counterexample",
               "policy-cut",
+              "path-differential",
               "frontier",
               "drop");
       assertThat(explorer.request(KEY).queued()).isTrue();

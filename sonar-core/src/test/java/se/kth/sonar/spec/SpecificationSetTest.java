@@ -40,6 +40,28 @@ class SpecificationSetTest {
   }
 
   @Test
+  void deliveryIsForbiddenByARequiredIsolationOrAnUnwantedReachability() {
+    Prefix prefix = Prefix.parse("10.0.0.0/24");
+    Specification.Status required = Specification.Status.parse("broken_removed");
+    Specification.Status unwanted = Specification.Status.parse("broken_added");
+    ForwardingPredicate isolation = new ForwardingPredicate.Isolation(R1, prefix);
+    ForwardingPredicate reachability = new ForwardingPredicate.Reachability(R1, prefix);
+    assertThat(new Specification(isolation, required).forbidsDelivery()).isTrue();
+    assertThat(new Specification(isolation, unwanted).forbidsDelivery()).isFalse();
+    assertThat(new Specification(reachability, unwanted).forbidsDelivery()).isTrue();
+    assertThat(new Specification(reachability, required).forbidsDelivery()).isFalse();
+    assertThat(
+            new Specification(
+                    new ForwardingPredicate.Waypointing(R1, prefix, RouterId.of("r2")), unwanted)
+                .forbidsDelivery())
+        .isFalse();
+    assertThat(new Specification(reachability, required).requiresDelivery()).isTrue();
+    assertThat(new Specification(reachability, unwanted).requiresDelivery()).isFalse();
+    assertThat(new Specification(isolation, unwanted).requiresDelivery()).isTrue();
+    assertThat(new Specification(isolation, required).requiresDelivery()).isFalse();
+  }
+
+  @Test
   void precedenceRanksBrokenAboveOtherLabelsAboveIntact() {
     assertThat(Specification.Status.parse("broken_added").precedence()).isEqualTo(2);
     assertThat(Specification.Status.parse("regression").precedence()).isEqualTo(2);

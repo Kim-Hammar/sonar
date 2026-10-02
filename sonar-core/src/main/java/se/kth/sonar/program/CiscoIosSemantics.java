@@ -1,6 +1,7 @@
 package se.kth.sonar.program;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -28,8 +29,10 @@ import se.kth.sonar.text.SourceSpan;
  * The semantics of the Cisco IOS dialect that its relation schema declares as derived: which router
  * owns an address, the subnet of an interface, the OSPF area an interface ends up in, the interface
  * at the other end of a link, the remote AS a neighbor inherits from its peer group, the prefix of
- * a network or route statement, the AS a router's name assigns it, and a few more. It also knows
- * how to realise a wanted subnet, area, remote AS, peer router, coverage or prefix as text.
+ * a network, route or OSPF network statement, the AS a router's name assigns it, and a few more. It
+ * also knows how to realise a wanted subnet, area, remote AS, peer router, coverage or prefix as
+ * text. An OSPF network statement wide enough for several interfaces covers the one with the lowest
+ * address.
  */
 public final class CiscoIosSemantics implements ProgramModel.Factory {
   private static final Set<String> FUNCTIONS =
@@ -40,6 +43,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
           "igp-enabled",
           "igp-peer",
           "isis-area",
+          "isis-attached",
           "isis-level-1",
           "link-peer",
           "loopback-address",
@@ -48,9 +52,33 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
           "ospf-loopback-required",
           "network-prefix",
           "ospf-area",
+          "route-map-export-attributes",
+          "route-map-import-attributes",
+          "route-map-path-attributes",
           "route-map-use",
           "subnet",
-          "stub-prefix");
+          "stub-prefix",
+          "wildcard-prefix");
+
+  /**
+   * The BGP path attributes a clause can set. Only a BGP session carries them, so a map that sets
+   * one is a session policy, and redistribution into an IGP would apply it for nothing.
+   */
+  private static final Set<String> PATH_ATTRIBUTES =
+      Set.of("local-preference", "as-path-prepend", "communities");
+
+  /**
+   * What a clause sets for the router's own choice among routes: a local preference ranks routes
+   * inside the receiving system and does not cross an external session, so it belongs on import.
+   */
+  private static final Set<String> IMPORT_ATTRIBUTES = Set.of("local-preference");
+
+  /**
+   * What a clause sets for the neighbor's choice among routes: a metric and a prepended AS path
+   * speak to the system that receives the route, so they belong on export.
+   */
+  private static final Set<String> EXPORT_ATTRIBUTES = Set.of("metric", "as-path-prepend");
+
   private static final Pattern NAME_ASN = Pattern.compile("_as(\\d+)_");
   private static final int MAX_HOSTS = 4;
   private static final int NET_SUFFIX_GROUPS = 4;
@@ -134,7 +162,41 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       }
     }
     addIgpPeers(topology, objects, derived);
+    addIsisAttachment(objects, derived);
     return derived;
+  }
+
+  /**
+   * Marks every IS-IS router whose area has a way out: a router of the area that also runs level 2,
+   * which is what gives the level-1 routers of the area their route to everything beyond it. A
+   * router that is not confined to level 1 is such a router for its own area.
+   */
+  private static void addIsisAttachment(
+      List<ProgramObject> objects, Map<ProgramObject.Ref, Map<String, List<String>>> derived) {
+    Map<ProgramObject, List<String>> areas = new LinkedHashMap<>();
+    Set<String> attached = new HashSet<>();
+    for (ProgramObject object : objects) {
+      if (!object.ref().type().equals(ObjectType.ROUTER) || !object.has("isis-process")) {
+        continue;
+      }
+      List<String> area =
+          derived.getOrDefault(object.ref(), Map.of()).getOrDefault("isis-area", List.of());
+      areas.put(object, area);
+      String level = object.value("isis-level").orElse("level-1-2");
+      if (level.equals("level-1-2")) {
+        attached.addAll(area);
+      }
+    }
+    areas.forEach(
+        (router, area) -> {
+          if (router.value("isis-level").filter("level-1"::equals).isEmpty()
+              || area.stream().anyMatch(attached::contains)) {
+            Map<String, List<String>> values =
+                new LinkedHashMap<>(derived.getOrDefault(router.ref(), Map.of()));
+            values.put("isis-attached", List.of("true"));
+            derived.put(router.ref(), Map.copyOf(values));
+          }
+        });
   }
 
   /**
@@ -309,6 +371,11 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
             : List.of();
       }
       case "network-prefix" -> prefixOf(object.value("network"), object.value("mask"));
+      case "wildcard-prefix" ->
+          wildcardPrefix(object.value("network"), object.value("wildcard"))
+              .map(Prefix::toString)
+              .map(List::of)
+              .orElse(List.of());
       case "link-peer" ->
           topology
               .peer(new Topology.Endpoint(router, object.ref().key().getFirst()))
@@ -318,7 +385,7 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
                           .toString())
               .map(List::of)
               .orElse(List.of());
-      case "igp-peer" -> List.of();
+      case "igp-peer", "isis-attached" -> List.of();
       case "effective-remote-as" -> {
         if (object.has("remote-as")) {
           yield object.values("remote-as");
@@ -389,18 +456,27 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
         if (prefix.isEmpty()) {
           yield List.of();
         }
+        ProgramObject covered = null;
+        Ipv4 lowest = null;
         for (ProgramObject candidate : byRef.values()) {
-          if (candidate.ref().type().equals("interface")
-              && candidate
-                  .value("address")
-                  .flatMap(Ipv4::tryParse)
-                  .filter(prefix.get()::contains)
-                  .isPresent()) {
-            yield List.of(candidate.ref().toString());
+          if (!candidate.ref().type().equals("interface")) {
+            continue;
+          }
+          Optional<Ipv4> address =
+              candidate.value("address").flatMap(Ipv4::tryParse).filter(prefix.get()::contains);
+          if (address.isPresent() && (lowest == null || address.get().compareTo(lowest) < 0)) {
+            covered = candidate;
+            lowest = address.get();
           }
         }
-        yield List.of();
+        yield covered == null ? List.of() : List.of(covered.ref().toString());
       }
+      case "route-map-export-attributes" ->
+          sets(object, byRef, EXPORT_ATTRIBUTES) ? List.of("true") : List.of();
+      case "route-map-import-attributes" ->
+          sets(object, byRef, IMPORT_ATTRIBUTES) ? List.of("true") : List.of();
+      case "route-map-path-attributes" ->
+          sets(object, byRef, PATH_ATTRIBUTES) ? List.of("true") : List.of();
       case "route-map-use" -> routeMapUsed(object, byRef) ? List.of("true") : List.of();
       default -> throw new IllegalArgumentException("unknown derived function " + function);
     };
@@ -421,6 +497,23 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       }
     }
     return Optional.ofNullable(lowest);
+  }
+
+  /** Returns whether a clause of the route map sets one of {@code attributes}. */
+  private static boolean sets(
+      ProgramObject routeMap,
+      Map<ProgramObject.Ref, ProgramObject> objects,
+      Set<String> attributes) {
+    String name = routeMap.ref().key().getFirst();
+    for (ProgramObject object : objects.values()) {
+      if (object.ref().type().equals("route-map-entry")
+          && object.ref().router().equals(routeMap.ref().router())
+          && object.ref().key().getFirst().equals(name)
+          && attributes.stream().anyMatch(object::has)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Returns whether a route map has a typed control-plane use on its router. */
@@ -538,6 +631,18 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
         }
         yield result;
       }
+      case "wildcard-prefix" ->
+          Prefix.tryParse(target)
+              .map(
+                  prefix ->
+                      List.of(
+                          new ProgramModel.Realisation(
+                              dialect.grammar().production("ospf-network").orElseThrow(),
+                              Map.of(
+                                  "network", List.of(prefix.network().toString()),
+                                  "wildcard",
+                                      List.of(new Ipv4(~prefix.mask().bits()).toString())))))
+              .orElse(List.of());
       case "ospf-area" -> areaRealisations(target, object, program);
       case "effective-remote-as" -> remoteAsRealisations(target, object, program);
       case "isis-area" -> {
@@ -557,10 +662,38 @@ public final class CiscoIosSemantics implements ProgramModel.Factory {
       case "loopback-address" -> loopbackRealisations(target, object, program);
       case "ospf-coverage" -> coverageRealisations(target, object, program);
       case "igp-enabled" -> igpRealisations(object, program);
+      case "isis-attached" -> isisAttachmentRealisations(object, program);
       case "isis-level-1" -> isisLevelOneRealisations(target, object, program);
       case "route-map-use" -> routeMapUseRealisations(target, object, program);
       default -> List.of();
     };
+  }
+
+  /**
+   * Gives the area of a level-1 router a way out by raising one of the area's level-1 routers to
+   * level 1-2: the router itself first, then each of the others, since any of them would do for the
+   * area and only verification tells which one the network needs.
+   */
+  private List<ProgramModel.Realisation> isisAttachmentRealisations(
+      ProgramObject router, ProgramModel program) {
+    List<String> area = router.values("isis-area");
+    if (area.isEmpty() || router.value("isis-level").filter("level-1"::equals).isEmpty()) {
+      return List.of();
+    }
+    List<ProgramObject> confined = new ArrayList<>(List.of(router));
+    program.objects(ObjectType.ROUTER).stream()
+        .filter(other -> !other.ref().equals(router.ref()))
+        .filter(other -> other.values("isis-area").equals(area))
+        .filter(other -> other.value("isis-level").filter("level-1"::equals).isPresent())
+        .sorted(Comparator.comparing(other -> other.ref().toString()))
+        .forEach(confined::add);
+    Production level = dialect.grammar().production("isis-is-type").orElseThrow();
+    return confined.stream()
+        .map(
+            other ->
+                new ProgramModel.Realisation(
+                    level, Map.of("level", List.of("level-1-2")), other.ref()))
+        .toList();
   }
 
   /**

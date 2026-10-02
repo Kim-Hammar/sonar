@@ -207,7 +207,7 @@ public final class DecisionProblemFactory {
       body.append('\n');
       int shown = detail == 0 ? MAX_SPECIFICATIONS : MAX_SPECIFICATIONS / 2;
       for (Specification target : targets.subList(0, Math.min(shown, targets.size()))) {
-        body.append(predicate(target.predicate())).append('\n');
+        body.append(obligation(target)).append('\n');
       }
       if (targets.size() > shown) {
         body.append("and ").append(targets.size() - shown).append(" more\n");
@@ -602,6 +602,37 @@ public final class DecisionProblemFactory {
       return ref.key().isEmpty()
           ? "router " + ref.router().name()
           : ref.type() + " " + String.join(" ", ref.key()) + " on " + ref.router().name();
+    }
+
+    /**
+     * Describes what a repaired network must do: satisfy the predicate of {@code specification},
+     * or, when the specification expects the predicate to be absent, not satisfy it.
+     */
+    private static String obligation(Specification specification) {
+      if (specification.status().expectPresent()) {
+        return predicate(specification.predicate());
+      }
+      return switch (specification.predicate()) {
+        case ForwardingPredicate.Reachability r ->
+            "reachability: " + r.source().name() + " must not reach " + r.destination();
+        case ForwardingPredicate.Isolation i ->
+            "isolation: " + i.source().name() + " must not be isolated from " + i.destination();
+        case ForwardingPredicate.Waypointing w ->
+            "waypointing: "
+                + w.source().name()
+                + " must not reach "
+                + w.destination()
+                + " via "
+                + w.waypoint().name();
+        case ForwardingPredicate.LoadBalancing l ->
+            "load balancing: "
+                + l.source().name()
+                + " must not reach "
+                + l.destination()
+                + " over "
+                + l.routes()
+                + " paths";
+      };
     }
 
     private static String predicate(ForwardingPredicate predicate) {

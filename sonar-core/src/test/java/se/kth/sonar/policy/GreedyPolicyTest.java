@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.within;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import se.kth.sonar.belief.BeliefModel;
 import se.kth.sonar.belief.BeliefState;
@@ -21,7 +22,11 @@ import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.network.Topology;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
+import se.kth.sonar.relation.AttributePath;
+import se.kth.sonar.relation.Constraint;
 import se.kth.sonar.relation.Dialect;
+import se.kth.sonar.relation.Requirement;
+import se.kth.sonar.relation.ValueSupport;
 import se.kth.sonar.report.RepairResult;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
@@ -166,5 +171,42 @@ class GreedyPolicyTest {
         .isEqualTo(hypotheses.get(2).id());
     assertThat(ranked.ranking().orElseThrow().probability(hypotheses.get(1).id()))
         .isCloseTo(0.6, within(1e-12));
+  }
+
+  @Test
+  void aCandidateWithAnInventedValueRanksAfterTheOthersTheRankingGivesAChance() {
+    RepairState state = state(false);
+    Hypothesis observed = hypothesis(state, "10.0.0.2");
+    Hypothesis invented =
+        Hypothesis.of(
+            state.snapshot(),
+            List.of(
+                new EditOperator.ReplaceSlots(
+                    state.program().statements(R1).get(2),
+                    "address",
+                    List.of("10.0.0.3"),
+                    new Provenance.Forced(
+                        "address-identity",
+                        new Requirement(
+                            Requirement.Strength.SOFT,
+                            new Constraint.Exists(new AttributePath("owner", List.of())),
+                            Optional.empty()),
+                        ValueSupport.INVENTED))));
+    Hypothesis hopeless = hypothesis(state, "10.0.0.4");
+    Region.Hypotheses.Admitted ranked =
+        new Region.Hypotheses.Admitted(List.of(hopeless, invented, observed))
+            .rankedBy(
+                Distribution.of(
+                    Map.of(invented.id(), 0.9, observed.id(), 0.1, hopeless.id(), 0.0)));
+    assertThat(ranked.list()).containsExactly(observed, invented, hopeless);
+    assertThat(ranked.ranking().orElseThrow().probability(invented.id()))
+        .isCloseTo(0.9, within(1e-12));
+
+    Region.Hypotheses.Admitted tried = ranked.without(List.of(observed.id()));
+    assertThat(tried.list()).containsExactly(invented, hopeless);
+    assertThat(tried.without(List.of(invented.id())).restored())
+        .as("a region carried into another state starts from all its candidates, as ranked")
+        .isEqualTo(ranked);
+    assertThat(ranked.restored()).isEqualTo(ranked);
   }
 }

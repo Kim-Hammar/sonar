@@ -28,11 +28,11 @@ import se.kth.sonar.verify.DataPlaneEvidence;
  */
 public final class RouterEvidence {
   private final RepairState state;
-  private final Map<Prefix, Set<RouterId>> owners;
+  private final Map<Prefix, Set<ProgramObject.Ref>> origins;
 
   private RouterEvidence(RepairState state) {
     this.state = state;
-    this.owners = owners(state.program());
+    this.origins = origins(state.program());
   }
 
   /** Reads the evidence of {@code state}. */
@@ -42,7 +42,31 @@ public final class RouterEvidence {
 
   /** Returns the routers that originate {@code prefix}. */
   public Set<RouterId> owners(Prefix prefix) {
-    return owners.getOrDefault(prefix, Set.of());
+    Set<RouterId> owners = new LinkedHashSet<>();
+    origins(prefix).forEach(origin -> owners.add(origin.router()));
+    return owners;
+  }
+
+  /**
+   * Returns the objects that originate {@code prefix}: the interfaces on it, and the network
+   * statements and static routes for it.
+   */
+  public Set<ProgramObject.Ref> origins(Prefix prefix) {
+    return origins.getOrDefault(prefix, Set.of());
+  }
+
+  /**
+   * Returns the BGP neighbor objects by which {@code first} and {@code second} peer with each
+   * other, if they run BGP in different autonomous systems.
+   */
+  public static Set<ProgramObject.Ref> externalSessions(
+      ProgramModel program, RouterId first, RouterId second) {
+    Set<ProgramObject.Ref> sessions = new LinkedHashSet<>();
+    if (BgpPeering.external(program, first, second)) {
+      BgpPeering.sessions(program, first, second).forEach(session -> sessions.add(session.ref()));
+      BgpPeering.sessions(program, second, first).forEach(session -> sessions.add(session.ref()));
+    }
+    return sessions;
   }
 
   /** An unordered physical router relation. */
@@ -68,6 +92,50 @@ public final class RouterEvidence {
     knowing.addAll(
         state.verification().evidence().forwarders().getOrDefault(destination, Set.of()));
     return routeFrontier(state.problem().topology(), source, knowing);
+  }
+
+  /**
+   * Returns the BGP holders of {@code destination} at which its route could enter the IGP that
+   * leaves {@code source} without it: the holders on the nearest boundary of the no-route component
+   * around the source. A holder that peers internally with another holder and externally with none
+   * can only have the route from inside its autonomous system; IOS does not redistribute such a
+   * route into an IGP, so the boundary is sought beyond it.
+   */
+  public Set<RouterId> transferBoundary(RouterId source, Prefix destination) {
+    DataPlaneEvidence evidence = state.verification().evidence();
+    Set<RouterId> holders = evidence.routeHolders().getOrDefault(destination, Set.of());
+    Set<RouterId> suppliers = new HashSet<>(holders);
+    suppliers.addAll(owners(destination));
+    Set<RouterId> internal = new HashSet<>();
+    for (RouterId holder : holders) {
+      if (owners(destination).contains(holder)) {
+        continue;
+      }
+      boolean inside = false;
+      boolean outside = false;
+      for (RouterId peer : BgpPeering.peers(state.program(), holder)) {
+        if (suppliers.contains(peer)) {
+          boolean external = BgpPeering.external(state.program(), holder, peer);
+          outside |= external;
+          inside |= !external;
+        }
+      }
+      if (inside && !outside) {
+        internal.add(holder);
+      }
+    }
+    Set<RouterId> knowing = new HashSet<>(owners(destination));
+    knowing.addAll(evidence.forwarders().getOrDefault(destination, Set.of()));
+    knowing.removeAll(internal);
+    Set<RouterId> boundary = new LinkedHashSet<>();
+    for (Link link : routeFrontier(state.problem().topology(), source, knowing)) {
+      for (RouterId end : List.of(link.first(), link.second())) {
+        if (holders.contains(end) && !internal.contains(end)) {
+          boundary.add(end);
+        }
+      }
+    }
+    return boundary;
   }
 
   /** Returns the nearest physical boundary from {@code source} to any router in {@code knowing}. */
@@ -165,8 +233,8 @@ public final class RouterEvidence {
     return implicated;
   }
 
-  private static Map<Prefix, Set<RouterId>> owners(ProgramModel program) {
-    Map<Prefix, Set<RouterId>> owners = new HashMap<>();
+  private static Map<Prefix, Set<ProgramObject.Ref>> origins(ProgramModel program) {
+    Map<Prefix, Set<ProgramObject.Ref>> origins = new HashMap<>();
     for (ProgramObject object : program.objects()) {
       List<String> values = new ArrayList<>();
       switch (object.ref().type()) {
@@ -181,11 +249,9 @@ public final class RouterEvidence {
         Prefix.tryParse(value)
             .ifPresent(
                 prefix ->
-                    owners
-                        .computeIfAbsent(prefix, p -> new LinkedHashSet<>())
-                        .add(object.ref().router()));
+                    origins.computeIfAbsent(prefix, p -> new LinkedHashSet<>()).add(object.ref()));
       }
     }
-    return owners;
+    return origins;
   }
 }

@@ -99,7 +99,8 @@ public final class ValueDomains {
 
   /**
    * Returns candidate values for the slot group {@code slots} of {@code production} on {@code
-   * router}; values related to {@code completing} come from that relation instance.
+   * router}; values related to {@code completing} come from that relation instance. A literal
+   * listed after the observed values of the network is one the network does not hold.
    */
   public List<Candidate> candidates(
       ProgramModel program,
@@ -112,11 +113,17 @@ public final class ValueDomains {
         slots.stream().map(name -> production.slot(name).orElseThrow()).toList();
     List<Candidate> candidates = new ArrayList<>();
     Set<List<String>> seen = new HashSet<>();
+    boolean searched = false;
     for (DomainRule rule : rules(production, slots)) {
+      boolean unobserved = searched && rule.origin() instanceof DomainRule.Origin.Literals;
+      searched |= rule.origin() instanceof DomainRule.Origin.Observed;
       for (String value : values(rule, program, verification, router, completing, declared)) {
         Optional<List<String>> tokens = tokens(declared, value);
         if (tokens.isPresent() && seen.add(tokens.get())) {
-          candidates.add(new Candidate(tokens.get(), new Provenance.Domain(rule)));
+          candidates.add(
+              new Candidate(
+                  tokens.get(),
+                  unobserved ? new Provenance.Unobserved(rule) : new Provenance.Domain(rule)));
           if (candidates.size() == bounds.maxValuesPerSlot()) {
             return candidates;
           }

@@ -50,6 +50,12 @@ class RouteMapEvaluationTest {
       assertThat(RouteMapEvaluation.possibleBlockers(program, map, Prefix.parse("10.180.1.0/24")))
           .extracting(object -> object.ref().key().getLast())
           .containsExactly("5", "10");
+      assertThat(RouteMapEvaluation.decidingClauses(program, map, Prefix.parse("10.200.27.0/24")))
+          .extracting(object -> object.ref().key().getLast())
+          .containsExactly("5", "20");
+      assertThat(RouteMapEvaluation.decidingClauses(program, map, Prefix.parse("192.0.2.0/24")))
+          .extracting(object -> object.ref().key().getLast())
+          .containsExactly("5");
     }
   }
 

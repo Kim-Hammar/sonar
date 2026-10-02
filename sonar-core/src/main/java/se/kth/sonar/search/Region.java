@@ -15,6 +15,7 @@ import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.common.Distribution;
 import se.kth.sonar.generate.Hypothesis;
 import se.kth.sonar.network.Snapshot;
+import se.kth.sonar.relation.ValueSupport;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.text.RouterId;
 
@@ -124,13 +125,18 @@ public sealed interface Region
      * @param list the candidates
      * @param ranking the probability that each candidate is the repair, once the candidates are
      *     ranked
+     * @param generated the candidates as they were before any was removed, if any was
      */
-    record Admitted(List<Hypothesis> list, Optional<Distribution<ContentHash>> ranking)
+    record Admitted(
+        List<Hypothesis> list,
+        Optional<Distribution<ContentHash>> ranking,
+        Optional<Admitted> generated)
         implements Hypotheses {
       /** Copies the list and checks that a ranking covers exactly the candidates. */
       public Admitted {
         list = List.copyOf(Objects.requireNonNull(list, "list"));
         Objects.requireNonNull(ranking, "ranking");
+        Objects.requireNonNull(generated, "generated");
         if (ranking.isPresent()) {
           Set<ContentHash> ids = new HashSet<>();
           list.forEach(hypothesis -> ids.add(hypothesis.id()));
@@ -145,6 +151,20 @@ public sealed interface Region
         this(list, Optional.empty());
       }
 
+      /** Candidates of which none has been removed. */
+      public Admitted(List<Hypothesis> list, Optional<Distribution<ContentHash>> ranking) {
+        this(list, ranking, Optional.empty());
+      }
+
+      /**
+       * Returns the candidates as they were before any was removed. What was tried and set aside in
+       * one state of the network may repair another, so a region carried into a new state starts
+       * from all of its candidates again.
+       */
+      public Admitted restored() {
+        return generated.orElse(this);
+      }
+
       @Override
       public int bound() {
         return list.size();
@@ -155,36 +175,56 @@ public sealed interface Region
         return ranking.isPresent();
       }
 
-      /** Returns the candidates in ranking order, with their probabilities. */
+      /**
+       * Returns the candidates in ranking order, with their probabilities. Among the candidates the
+       * ranking gives a chance, one that needs an invented value comes after those built from
+       * values the network or the verifier already has, whatever their probabilities: an invention
+       * is a last resort. Candidates the ranking gives no chance keep their place at the end.
+       */
       public Admitted rankedBy(Distribution<ContentHash> probabilities) {
         Map<ContentHash, Hypothesis> byId = new HashMap<>();
         list.forEach(hypothesis -> byId.put(hypothesis.id(), hypothesis));
-        List<Hypothesis> ordered = new ArrayList<>();
+        List<Hypothesis> ranked = new ArrayList<>();
         for (ContentHash id : probabilities.ranked()) {
           Hypothesis hypothesis = byId.remove(id);
           if (hypothesis != null) {
-            ordered.add(hypothesis);
+            ranked.add(hypothesis);
           }
         }
         for (Hypothesis hypothesis : list) {
           if (byId.containsKey(hypothesis.id())) {
+            ranked.add(hypothesis);
+          }
+        }
+        List<Hypothesis> ordered = new ArrayList<>();
+        for (boolean invented : List.of(false, true)) {
+          for (Hypothesis hypothesis : ranked) {
+            if (probabilities.probability(hypothesis.id()) > 0
+                && (hypothesis.support() == ValueSupport.INVENTED) == invented) {
+              ordered.add(hypothesis);
+            }
+          }
+        }
+        for (Hypothesis hypothesis : ranked) {
+          if (probabilities.probability(hypothesis.id()) <= 0) {
             ordered.add(hypothesis);
           }
         }
         Map<ContentHash, Double> weights = new LinkedHashMap<>();
         ordered.forEach(
             hypothesis -> weights.put(hypothesis.id(), probabilities.probability(hypothesis.id())));
-        return new Admitted(ordered, Optional.of(Distribution.of(weights)));
+        return new Admitted(ordered, Optional.of(Distribution.of(weights)), generated);
       }
 
       /** Returns the candidates other than {@code removed}, keeping the ranking of the rest. */
       public Admitted without(Collection<ContentHash> removed) {
         Set<ContentHash> gone = Set.copyOf(removed);
         List<Hypothesis> kept = list.stream().filter(h -> !gone.contains(h.id())).toList();
+        Optional<Admitted> before = Optional.of(restored());
         if (kept.isEmpty() || ranking.isEmpty()) {
-          return new Admitted(kept);
+          return new Admitted(kept, Optional.empty(), before);
         }
-        return new Admitted(kept, Optional.of(ranking.get().without(gone)));
+        return new Admitted(kept, Optional.of(ranking.get().without(gone)), before);
       }
     }
   }

@@ -29,7 +29,7 @@ val audit by tasks.registering(Test::class) {
     useJUnitPlatform { includeTags("audit") }
     outputs.upToDateWhen { false }
     testLogging.showStandardStreams = true
-    for (name in listOf("sonar.dataset", "sonar.truth", "sonar.audit.scenarios", "sonar.audit.focus", "sonar.probe.edit", "sonar.probe.site", "sonar.probe.shown", "sonar.probe.specifications")) {
+    for (name in listOf("sonar.dataset", "sonar.truth", "sonar.audit.scenarios", "sonar.audit.focus", "sonar.probe.edit", "sonar.probe.site", "sonar.probe.shown", "sonar.probe.specifications", "sonar.probe.run", "sonar.probe.epoch", "sonar.probe.skip", "sonar.probe.then")) {
         providers.gradleProperty(name).orNull?.let { systemProperty(name, it) }
     }
 }

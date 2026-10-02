@@ -1,15 +1,14 @@
 package se.kth.sonar.generate;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.PriorityQueue;
 import java.util.Set;
 import se.kth.sonar.grammar.Grammar;
 import se.kth.sonar.grammar.Production;
@@ -40,6 +39,11 @@ import se.kth.sonar.verify.Verification;
  * {@code distinct} has no completion and discards the draft. A violated soft requirement adds the
  * completed draft as an alternative. Completion repeats until nothing is violated, and stops at the
  * bounds. Requirements the base program already violated are left alone unless asked for.
+ *
+ * <p>The alternatives of a completion come likeliest first, and drafts are completed best first by
+ * how far they depart from the first choices: a draft's rank is the sum of the positions of the
+ * alternatives it took, and taking a soft alternative counts one more. The hypotheses a bounded
+ * closure returns therefore vary every choice a little before varying any one choice a lot.
  */
 public final class ClosureEngine {
   private static final int MAX_ALTERNATIVES = 8;
@@ -99,11 +103,12 @@ public final class ClosureEngine {
       }
     }
     List<Hypothesis> results = new ArrayList<>();
-    Deque<Draft> open = new ArrayDeque<>();
-    open.addLast(start);
+    Frontier open = new Frontier();
+    open.add(start, 0);
     int depth = 0;
     while (!open.isEmpty() && results.size() < MAX_ALTERNATIVES) {
-      Draft draft = open.removeFirst();
+      Ranked ranked = open.next();
+      Draft draft = ranked.draft();
       Pending pending = pending(draft, baseline, obligations);
       if (pending.blocking().isEmpty()) {
         if (!draft.changesNothing()) {
@@ -115,13 +120,13 @@ public final class ClosureEngine {
         }
         pending.extendable().stream()
             .findFirst()
-            .ifPresent(next -> extend(open, draft, verification, next));
+            .ifPresent(next -> extend(open, draft, ranked.rank() + 1, verification, next));
         continue;
       }
       if (draft.operators().size() >= bounds.maxOperators()) {
         continue;
       }
-      extend(open, draft, verification, pending.blocking().getFirst());
+      extend(open, draft, ranked.rank(), verification, pending.blocking().getFirst());
       depth++;
       if (depth > bounds.maxClosureDepth() * MAX_ALTERNATIVES * MAX_COMPLETIONS) {
         break;
@@ -179,17 +184,62 @@ public final class ClosureEngine {
     return List.copyOf(unique.values());
   }
 
+  /**
+   * A draft waiting to be completed.
+   *
+   * @param draft the draft
+   * @param rank how far the draft departs from the first choices
+   * @param order the position at which the draft was added, which orders drafts of equal rank
+   */
+  private record Ranked(Draft draft, int rank, int order) {}
+
+  /** The drafts waiting to be completed, lowest rank first and oldest first among equals. */
+  private static final class Frontier {
+    private final PriorityQueue<Ranked> queue =
+        new PriorityQueue<>(Comparator.comparingInt(Ranked::rank).thenComparingInt(Ranked::order));
+    private int added;
+
+    void add(Draft draft, int rank) {
+      queue.add(new Ranked(draft, rank, added++));
+    }
+
+    boolean isEmpty() {
+      return queue.isEmpty();
+    }
+
+    Ranked next() {
+      return queue.remove();
+    }
+  }
+
+  /**
+   * Adds the drafts that complete {@code obligation} in {@code draft}, each ranked {@code rank}
+   * plus the position of its completion among the alternatives, and further back when it writes a
+   * value the network does not hold.
+   */
   private void extend(
-      Deque<Draft> open, Draft draft, Verification verification, Obligation obligation) {
-    for (List<EditOperator> completion : complete(draft, verification, obligation)) {
-      extended(draft, completion)
+      Frontier open, Draft draft, int rank, Verification verification, Obligation obligation) {
+    List<List<EditOperator>> completions = complete(draft, verification, obligation);
+    for (int position = 0; position < completions.size(); position++) {
+      int ranked = rank + position + (unobserved(completions.get(position)) ? MAX_COMPLETIONS : 0);
+      extended(draft, completions.get(position))
           .filter(
               extended ->
                   extended.routers().size() <= bounds.maxRouters()
                       && extended.operators().size() <= bounds.maxOperators()
                       && !extended.program().snapshot().equals(draft.program().snapshot()))
-          .ifPresent(open::addLast);
+          .ifPresent(extended -> open.add(extended, ranked));
     }
+  }
+
+  /**
+   * Returns whether {@code completion} writes a value that no object of the network holds: a
+   * literal the network was searched for, or a fresh name. Such a value departs further from the
+   * first choices than any observed one.
+   */
+  private static boolean unobserved(List<EditOperator> completion) {
+    return completion.stream()
+        .anyMatch(operator -> operator.provenance().support() == ValueSupport.INVENTED);
   }
 
   /** Returns the draft extended by {@code completion}, or nothing if it does not apply. */
@@ -382,15 +432,19 @@ public final class ClosureEngine {
       return programs.evaluator().holderOf(program, instance, path);
     }
 
-    /** Aligns one side of an equality with the other, both ways when both are defined. */
+    /**
+     * Aligns one side of an equality with the other, both ways when both are defined. A value its
+     * own object is known to hold wrongly is not copied to the other side: that would carry a fault
+     * on rather than repair it.
+     */
     List<List<EditOperator>> align(AttributePath left, AttributePath right, boolean agree) {
       Optional<List<String>> l = valueAt(left);
       Optional<List<String>> r = valueAt(right);
       List<List<EditOperator>> alternatives = new ArrayList<>();
-      if (r.isPresent()) {
+      if (r.isPresent() && !disputed(right)) {
         alternatives.addAll(set(left, r.get()));
       }
-      if (l.isPresent()) {
+      if (l.isPresent() && !disputed(left)) {
         alternatives.addAll(set(right, l.get()));
       }
       if (agree && l.isPresent() && r.isEmpty()) {
@@ -400,6 +454,38 @@ public final class ClosureEngine {
         alternatives.addAll(unset(right));
       }
       return alternatives;
+    }
+
+    /**
+     * Returns whether the attribute at {@code path} violates a hard equality with another attribute
+     * of the same object, as a router's AS that differs from the AS its design assigns it.
+     */
+    private boolean disputed(AttributePath path) {
+      Optional<ProgramObject> holder = holderOf(path);
+      if (holder.isEmpty()) {
+        return false;
+      }
+      String name = path.attributes().getLast();
+      for (RelationInstance other : program.violated()) {
+        for (Requirement violated : other.violated()) {
+          if (violated.strength() != Requirement.Strength.HARD
+              || !(violated.constraint() instanceof Constraint.Equal equal)) {
+            continue;
+          }
+          Optional<ProgramObject> left =
+              programs.evaluator().holderOf(program, other, equal.left());
+          Optional<ProgramObject> right =
+              programs.evaluator().holderOf(program, other, equal.right());
+          if (left.isPresent()
+              && left.equals(right)
+              && left.equals(holder)
+              && (equal.left().attributes().getLast().equals(name)
+                  || equal.right().attributes().getLast().equals(name))) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     /**

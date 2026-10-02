@@ -129,29 +129,30 @@ public final class RouteMapEvaluation {
    */
   public static List<ProgramObject> possibleBlockers(
       ProgramModel program, ProgramObject.Ref routeMap, Prefix prefix) {
-    if (!routeMap.type().equals("route-map") || routeMap.key().isEmpty()) {
-      return List.of();
-    }
-    String name = routeMap.key().getFirst();
-    List<ProgramObject> blockers = new java.util.ArrayList<>();
-    List<ProgramObject> clauses =
-        program.objectsOf(routeMap.router()).stream()
-            .filter(object -> object.ref().type().equals("route-map-entry"))
-            .filter(object -> object.ref().key().getFirst().equals(name))
-            .sorted(Comparator.comparingLong(RouteMapEvaluation::sequence))
-            .toList();
-    for (ProgramObject clause : clauses) {
+    return decidingClauses(program, routeMap, prefix).stream()
+        .filter(clause -> clause.value("action").filter("deny"::equals).isPresent())
+        .toList();
+  }
+
+  /**
+   * Returns the clauses of {@code routeMap} that can decide a route for {@code prefix}, in clause
+   * order: every clause the prefix matches, up to and including the first one whose match depends
+   * on the prefix alone. The earlier ones also depend on a tag or community, which the
+   * configuration program does not know, so each of them may be the clause IOS applies.
+   */
+  public static List<ProgramObject> decidingClauses(
+      ProgramModel program, ProgramObject.Ref routeMap, Prefix prefix) {
+    List<ProgramObject> deciding = new java.util.ArrayList<>();
+    for (ProgramObject clause : clauses(program, routeMap)) {
       if (!matchesPrefix(program, routeMap, clause, prefix)) {
         continue;
       }
-      if (clause.value("action").filter("deny"::equals).isPresent()) {
-        blockers.add(clause);
-      }
+      deciding.add(clause);
       if (!clause.has("match-community") && !clause.has("match-tag")) {
         break;
       }
     }
-    return List.copyOf(blockers);
+    return List.copyOf(deciding);
   }
 
   private static boolean matchesPrefix(

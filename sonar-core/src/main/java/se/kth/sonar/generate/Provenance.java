@@ -56,6 +56,24 @@ public sealed interface Provenance {
   }
 
   /**
+   * A literal of the grammar that the network was searched for and does not hold. It is as much
+   * made up for the candidate as a fresh name is.
+   *
+   * @param rule the rule that lists the literal
+   */
+  record Unobserved(DomainRule rule) implements Provenance {
+    /** Checks the rule. */
+    public Unobserved {
+      Objects.requireNonNull(rule, "rule");
+    }
+
+    @Override
+    public ValueSupport support() {
+      return ValueSupport.INVENTED;
+    }
+  }
+
+  /**
    * The values are required by a requirement of a relation instance that the candidate completes.
    *
    * @param relation the relation's name

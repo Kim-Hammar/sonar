@@ -2,6 +2,7 @@ package se.kth.sonar.generate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +32,7 @@ import se.kth.sonar.search.Region;
 import se.kth.sonar.search.RelationRegion;
 import se.kth.sonar.search.SearchSpace;
 import se.kth.sonar.search.SearchSpaceBuilder;
+import se.kth.sonar.search.SiteRegion;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.spec.SpecificationSet;
@@ -41,6 +43,7 @@ import se.kth.sonar.state.RepairProblem;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.text.LineEdit;
 import se.kth.sonar.text.RouterId;
+import se.kth.sonar.text.SourceSpan;
 import se.kth.sonar.verify.DataPlaneEvidence;
 import se.kth.sonar.verify.Verification;
 
@@ -323,6 +326,64 @@ class GenerationTest {
     assertThat(repairedSecond)
         .contains("neighbor 10.1.0.0 route-map IMPORT in")
         .contains("neighbor 10.1.0.0 route-map EXPORT out");
+  }
+
+  @Test
+  void aLinkRepairClosesOverTheFirstMatchBlockerOnTheLink() {
+    RouterId firstId = RouterId.of("1_as65001_r1");
+    RouterId secondId = RouterId.of("2_as65002_r2");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                firstId + ".cfg",
+                """
+                hostname r1
+                ip access-list extended EDGE_IN
+                 5 deny ip any any
+                 10 permit ip any any
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.8 255.255.255.254
+                 ip access-group EDGE_IN in
+                """,
+                secondId + ".cfg",
+                """
+                hostname r2
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.1 255.255.255.254
+                """));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(firstId, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(secondId, "GigabitEthernet0/0"))));
+    ProgramModel program = programs.model(snapshot, topology);
+    RelationInstance link = program.instances("link").getFirst();
+    assertThat(link.violated())
+        .extracting(Requirement::text)
+        .contains("hard equal a.subnet b.subnet");
+    Hypothesis readdressed =
+        Hypothesis.of(
+            snapshot,
+            List.of(
+                new EditOperator.ReplaceSlots(
+                    program.statements(firstId).stream()
+                        .filter(statement -> statement.text().startsWith("ip address"))
+                        .findFirst()
+                        .orElseThrow(),
+                    "address",
+                    List.of("10.1.0.0"),
+                    new Provenance.Existing())));
+
+    List<Hypothesis> closed =
+        InterdomainTransferClosure.closeLink(program, link, List.of(readdressed));
+
+    assertThat(closed).hasSize(1);
+    assertThat(snapshot.patch(closed.getFirst().transaction()).after().text(firstId).text())
+        .contains("ip address 10.1.0.0 255.255.255.254")
+        .doesNotContain("5 deny ip any any")
+        .contains("10 permit ip any any");
   }
 
   @Test
@@ -757,6 +818,30 @@ class GenerationTest {
             programs.model(snapshot, Topology.of(snapshot.routers(), List.of())));
 
     assertThat(admissibility.admit(aclState, deletions)).isNotEmpty();
+    assertThat(deletions).allMatch(deletion -> deletion.support() == ValueSupport.OBSERVED);
+
+    SearchSpaceBuilder spaces =
+        new SearchSpaceBuilder(
+            seeds,
+            closure,
+            admissibility,
+            new SearchSpace.Capacity(16, 256),
+            Bounds.defaults(),
+            context);
+    Region expanded =
+        spaces.expand(
+            new SiteRegion(
+                new Region.Id("site:" + acl),
+                acl,
+                List.of(),
+                Map.of(ONE, snapshot.text(ONE).digest()),
+                new Region.Hypotheses.Deferred(8)),
+            aclState);
+    assertThat(((Region.Hypotheses.Admitted) expanded.hypotheses()).list())
+        .filteredOn(hypothesis -> hypothesis.id().equals(deletions.getFirst().id()))
+        .as("the deletion the first-match analysis also derives")
+        .singleElement()
+        .matches(hypothesis -> hypothesis.support() == ValueSupport.EVIDENCED);
   }
 
   @Test
@@ -859,6 +944,31 @@ class GenerationTest {
                 text.contains("neighbor 10.0.0.4 peer-group IBGP")
                     && text.contains("neighbor 10.0.0.5 peer-group IBGP")
                     && text.contains("neighbor 10.0.0.2 peer-group RR"));
+
+    RouterId doubtful = RouterId.of("5_as65007_c2");
+    Snapshot renamed =
+        Snapshot.of(
+            Map.of(
+                "1_as65001_rr1.cfg",
+                rr1,
+                "2_as65001_rr2.cfg",
+                rr2,
+                "3_as65001_c0.cfg",
+                c0,
+                "4_as65001_c1.cfg",
+                c1,
+                doubtful + ".cfg",
+                c2));
+    assertThat(
+            BgpIncidenceSet.infer(
+                programs.model(renamed, Topology.of(renamed.routers(), List.of())),
+                List.of(RouterId.of("4_as65001_c1"), doubtful)))
+        .allSatisfy(
+            item ->
+                assertThat(item.objects())
+                    .as("a router whose BGP process names another AS than its design")
+                    .extracting(ProgramObject.Ref::router)
+                    .doesNotContain(doubtful));
   }
 
   @Test
@@ -1144,7 +1254,8 @@ class GenerationTest {
     Snapshot snapshot = Snapshot.of(Map.of(ONE + ".cfg", R1, TWO + ".cfg", second));
     ForwardingPredicate predicate =
         new ForwardingPredicate.Isolation(ONE, Prefix.parse("10.0.0.2/32"));
-    Specification target = new Specification(predicate, Specification.Status.parse("broken_added"));
+    Specification target =
+        new Specification(predicate, Specification.Status.parse("broken_removed"));
     Topology topology = state.problem().topology();
     RepairProblem problem =
         new RepairProblem("session-cut", snapshot, topology, SpecificationSet.of(List.of(target)));
@@ -1163,6 +1274,18 @@ class GenerationTest {
     RepairState cutting =
         RepairState.initial(problem, verification, programs.model(snapshot, topology));
     BgpSessionCut cut = BgpSessionCut.infer(cutting).getFirst();
+    Specification unwanted =
+        new Specification(predicate, Specification.Status.parse("broken_added"));
+    assertThat(
+            BgpSessionCut.infer(
+                RepairState.initial(
+                    problem,
+                    new Verification(
+                        snapshot.id(),
+                        new Verdict(List.of(unwanted), List.of(), List.of()),
+                        verification.evidence()),
+                    cutting.program())))
+        .isEmpty();
 
     List<Hypothesis> hypotheses = new BgpSessionCutGenerator().generate(cutting.program(), cut);
 
@@ -1503,6 +1626,95 @@ class GenerationTest {
   }
 
   @Test
+  void aForbiddenAcceptedPathOffersAnAttachmentWhereItCrossesAutonomousSystems() {
+    RouterId exporter = RouterId.of("3_as65002_r3");
+    String source =
+        """
+        hostname r1
+        interface Loopback0
+         ip address 10.0.0.1 255.255.255.255
+        router bgp 65001
+         neighbor 10.0.0.2 remote-as 65001
+         address-family ipv4
+          neighbor 10.0.0.2 activate
+         exit-address-family
+        """;
+    String border =
+        """
+        hostname r2
+        interface Loopback0
+         ip address 10.0.0.2 255.255.255.255
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        router bgp 65001
+         neighbor 10.0.0.1 remote-as 65001
+         neighbor 10.1.0.0 remote-as 65002
+         address-family ipv4
+          neighbor 10.0.0.1 activate
+          neighbor 10.1.0.0 activate
+         exit-address-family
+        """;
+    String origin =
+        """
+        hostname r3
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.254
+        router bgp 65002
+         neighbor 10.1.0.1 remote-as 65001
+         address-family ipv4
+          neighbor 10.1.0.1 activate
+         exit-address-family
+        ip prefix-list BLOCK seq 10 permit 10.200.0.0/24
+        route-map EXPORT deny 10
+         match ip address prefix-list BLOCK
+        route-map EXPORT permit 20
+        """;
+    Snapshot snapshot =
+        Snapshot.of(Map.of(ONE + ".cfg", source, TWO + ".cfg", border, exporter + ".cfg", origin));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(TWO, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(exporter, "GigabitEthernet0/0"))));
+    Specification forbidden =
+        new Specification(
+            new ForwardingPredicate.Reachability(ONE, Prefix.parse("10.200.0.0/24")),
+            Specification.Status.parse("broken_added"));
+    RepairProblem problem =
+        new RepairProblem("leak", snapshot, topology, SpecificationSet.of(List.of(forbidden)));
+    Verification verification =
+        new Verification(
+            snapshot.id(),
+            new Verdict(List.of(forbidden), List.of(), List.of()),
+            new DataPlaneEvidence(
+                Map.of(
+                    forbidden.predicate(),
+                    List.of(
+                        new DataPlaneEvidence.Trace(
+                            List.of(ONE, TWO, exporter), DataPlaneEvidence.Disposition.ACCEPTED))),
+                Map.of(),
+                Map.of()));
+    RepairState leaking =
+        RepairState.initial(problem, verification, programs.model(snapshot, topology));
+
+    assertThat(ProtocolTransfer.infer(leaking))
+        .filteredOn(transfer -> transfer.attachment().isPresent())
+        .singleElement()
+        .satisfies(
+            transfer -> {
+              assertThat(transfer.policy())
+                  .isEqualTo(new ProgramObject.Ref("route-map", exporter, List.of("EXPORT")));
+              assertThat(transfer.attachment().orElseThrow())
+                  .isEqualTo(
+                      new ProtocolTransfer.Attachment(
+                          new ProgramObject.Ref("bgp-neighbor", exporter, List.of("10.1.0.1")),
+                          "out"));
+            });
+  }
+
+  @Test
   void theLinkObligationOffersAreaAlignmentBothWays() {
     RelationInstance link = state.program().instances("link").getFirst();
     Requirement requirement = link.violated().getFirst();
@@ -1578,6 +1790,157 @@ class GenerationTest {
                     .text(ONE)
                     .text()
                     .contains(" is-type level-1-2"));
+  }
+
+  @Test
+  void aPolicyAttachedAgainstItsDirectionBreaksASoftRequirement() {
+    java.util.function.BiFunction<String, String, Snapshot> attached =
+        (inbound, outbound) ->
+            Snapshot.of(
+                Map.of(
+                    ONE + ".cfg",
+                    """
+                    hostname r1
+                    interface GigabitEthernet0/0
+                     ip address 10.1.0.0 255.255.255.254
+                    route-map IMPORT permit 10
+                     set local-preference 100
+                    route-map EXPORT permit 10
+                     set metric 20
+                     set as-path prepend 65001
+                    router bgp 65001
+                     neighbor 10.1.0.1 remote-as 65002
+                     address-family ipv4
+                      neighbor 10.1.0.1 activate
+                      neighbor 10.1.0.1 route-map %s in
+                      %s
+                     exit-address-family
+                    """
+                        .formatted(
+                            inbound,
+                            outbound.isEmpty()
+                                ? "!"
+                                : "neighbor 10.1.0.1 route-map " + outbound + " out"),
+                    TWO + ".cfg",
+                    """
+                    hostname r2
+                    interface GigabitEthernet0/0
+                     ip address 10.1.0.1 255.255.255.254
+                    router bgp 65002
+                     neighbor 10.1.0.0 remote-as 65001
+                    """));
+    java.util.function.Function<Snapshot, RelationInstance> policy =
+        snapshot ->
+            programs
+                .model(snapshot, Topology.of(snapshot.routers(), List.of()))
+                .instances("bgp-policy")
+                .stream()
+                .filter(instance -> instance.routers().contains(ONE))
+                .findFirst()
+                .orElseThrow();
+
+    assertThat(policy.apply(attached.apply("IMPORT", "EXPORT")).violated()).isEmpty();
+    assertThat(policy.apply(attached.apply("EXPORT", "IMPORT")).violated())
+        .extracting(Requirement::text)
+        .containsExactly(
+            "soft absent neighbor.route-map-in.export-attributes",
+            "soft absent neighbor.route-map-out.import-attributes");
+
+    Snapshot misdirected = attached.apply("EXPORT", "");
+    ProgramModel program =
+        programs.model(misdirected, Topology.of(misdirected.routers(), List.of()));
+    List<Hypothesis> repairs =
+        new PolicyDirectionRepair(seeds)
+            .generate(program, policy.apply(misdirected).roles().get("neighbor"));
+    assertThat(repairs)
+        .extracting(repair -> misdirected.patch(repair.transaction()).after())
+        .extracting(
+            repaired ->
+                repaired
+                    .text(ONE)
+                    .text()
+                    .lines()
+                    .filter(line -> line.contains("route-map") && line.contains("neighbor"))
+                    .map(String::strip)
+                    .toList())
+        .containsExactly(
+            List.of(
+                "neighbor 10.1.0.1 route-map IMPORT in", "neighbor 10.1.0.1 route-map EXPORT out"),
+            List.of("neighbor 10.1.0.1 route-map EXPORT out"));
+    assertThat(repairs)
+        .allSatisfy(
+            repair ->
+                assertThat(policy.apply(misdirected.patch(repair.transaction()).after()).violated())
+                    .isEmpty());
+  }
+
+  @Test
+  void aLevelOneAreaWithoutAWayOutIsRepairedByRaisingOneOfItsRouters() {
+    java.util.function.BiFunction<Integer, String, String> router =
+        (n, level) ->
+            """
+            hostname r%d
+            interface GigabitEthernet0/0
+             ip address 10.1.0.%d 255.255.255.254
+             ip router isis 1
+            router isis 1
+             net 49.0001.0000.0000.000%d.00
+             is-type %s
+            """
+                .formatted(n, n, n, level);
+    Topology.Link link =
+        new Topology.Link(
+            new Topology.Endpoint(ONE, "GigabitEthernet0/0"),
+            new Topology.Endpoint(TWO, "GigabitEthernet0/0"));
+    Snapshot attached =
+        Snapshot.of(
+            Map.of(
+                ONE + ".cfg", router.apply(0, "level-1"),
+                TWO + ".cfg", router.apply(1, "level-1-2")));
+    assertThat(
+            programs
+                .model(attached, Topology.of(attached.routers(), List.of(link)))
+                .instances("isis-attachment"))
+        .hasSize(2)
+        .allMatch(RelationInstance::satisfied);
+
+    Snapshot confined =
+        Snapshot.of(
+            Map.of(
+                ONE + ".cfg", router.apply(0, "level-1"),
+                TWO + ".cfg", router.apply(1, "level-1")));
+    ProgramModel program = programs.model(confined, Topology.of(confined.routers(), List.of(link)));
+    assertThat(program.instances("isis-attachment")).noneMatch(RelationInstance::satisfied);
+    RelationInstance attachment =
+        program.instances("isis-attachment").stream()
+            .filter(instance -> instance.routers().contains(TWO))
+            .findFirst()
+            .orElseThrow();
+    Verification verification =
+        new Verification(confined.id(), state.verification().verdict(), DataPlaneEvidence.none());
+
+    List<Hypothesis> hypotheses =
+        closure.close(
+            program,
+            verification,
+            List.of(),
+            Set.of(new ClosureEngine.Obligation(attachment, attachment.violated().getFirst())));
+
+    assertThat(hypotheses)
+        .extracting(
+            hypothesis ->
+                hypothesis.routers().stream()
+                    .filter(
+                        changed ->
+                            confined
+                                .patch(hypothesis.transaction())
+                                .after()
+                                .text(changed)
+                                .text()
+                                .contains(" is-type level-1-2"))
+                    .toList())
+        .as("the router itself, then the other level-1 router of the area")
+        .startsWith(List.of(TWO), List.of(ONE));
   }
 
   @Test
@@ -1696,6 +2059,153 @@ class GenerationTest {
                     && repaired.text(secondId).text().contains(" ip ospf 1 area 0")
                     && repaired.text(secondId).text().contains(" ip ospf cost 10")
                     && repaired.text(secondId).text().contains(" ip ospf network point-to-point"));
+  }
+
+  @Test
+  void narrowingAnInterfaceSubnetNarrowsTheOspfNetworkStatementThatNamesIt() {
+    RouterId firstId = RouterId.of("1_as65001_r1");
+    RouterId secondId = RouterId.of("2_as65001_r2");
+    String first =
+        """
+        hostname r1
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.252
+        interface GigabitEthernet0/1
+         ip address 10.1.0.2 255.255.255.254
+        router ospf 1
+         network 10.1.0.0 0.0.0.3 area 0
+        """;
+    String second =
+        """
+        hostname r2
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        router ospf 1
+         network 10.1.0.0 0.0.0.1 area 0
+        """;
+    Snapshot snapshot = Snapshot.of(Map.of(firstId + ".cfg", first, secondId + ".cfg", second));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(firstId, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(secondId, "GigabitEthernet0/0"))));
+    RepairProblem problem =
+        new RepairProblem("wide-subnet", snapshot, topology, state.problem().specifications());
+    Verification verification =
+        new Verification(snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none());
+    RepairState wide =
+        RepairState.initial(problem, verification, programs.model(snapshot, topology));
+    RelationInstance link =
+        wide.program().instances("link").stream()
+            .filter(instance -> !instance.satisfied())
+            .findFirst()
+            .orElseThrow();
+    Set<ClosureEngine.Obligation> obligations =
+        link.violated().stream()
+            .filter(requirement -> requirement.text().contains("equal a.subnet b.subnet"))
+            .map(requirement -> new ClosureEngine.Obligation(link, requirement))
+            .collect(java.util.stream.Collectors.toSet());
+
+    List<String> repaired =
+        closure.close(wide.program(), wide.verification(), List.of(), obligations).stream()
+            .map(hypothesis -> wide.snapshot().patch(hypothesis.transaction()).after())
+            .map(after -> after.text(firstId).text())
+            .toList();
+
+    assertThat(repaired)
+        .anyMatch(
+            text ->
+                text.contains(" ip address 10.1.0.0 255.255.255.254")
+                    && text.contains(" network 10.1.0.0 0.0.0.1 area 0"));
+    assertThat(repaired)
+        .noneMatch(
+            text ->
+                text.contains(" ip address 10.1.0.0 255.255.255.254")
+                    && text.contains(" network 10.1.0.0 0.0.0.3 area 0"));
+  }
+
+  /**
+   * Each end already has one interface with its own cost, and the activated link adds a second: the
+   * counts below are of each cost on each router.
+   */
+  @Test
+  void anActivatedLinkFirstAgreesOnACostAndOffersTheCostsBothEndsKnow() {
+    RouterId firstId = RouterId.of("1_as65001_r1");
+    RouterId secondId = RouterId.of("2_as65001_r2");
+    String first =
+        """
+        hostname r1
+        interface GigabitEthernet0/0
+         ip address 10.1.0.1 255.255.255.254
+        interface GigabitEthernet0/1
+         ip address 10.2.0.1 255.255.255.254
+         ip ospf network point-to-point
+         ip ospf 1 area 0
+         ip ospf cost 20
+        router ospf 1
+        """;
+    String second =
+        """
+        hostname r2
+        interface GigabitEthernet0/0
+         ip address 10.1.0.0 255.255.255.254
+        interface GigabitEthernet0/1
+         ip address 10.3.0.1 255.255.255.254
+         ip ospf network point-to-point
+         ip ospf 1 area 0
+         ip ospf cost 30
+        router ospf 1
+        """;
+    Snapshot snapshot = Snapshot.of(Map.of(firstId + ".cfg", first, secondId + ".cfg", second));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(firstId, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(secondId, "GigabitEthernet0/0"))));
+    RepairProblem problem =
+        new RepairProblem("link-costs", snapshot, topology, state.problem().specifications());
+    Verification verification =
+        new Verification(snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none());
+    RepairState latent =
+        RepairState.initial(problem, verification, programs.model(snapshot, topology));
+    RelationInstance link = latent.program().instances("link").getFirst();
+
+    List<List<Integer>> costs =
+        new IgpAdjacencyGenerator(seeds, closure)
+            .generate(latent.program(), latent.verification(), link).stream()
+                .map(hypothesis -> latent.snapshot().patch(hypothesis.transaction()).after())
+                .map(
+                    repaired ->
+                        List.of(
+                            occurrences(repaired.text(firstId).text(), " ip ospf cost 20"),
+                            occurrences(repaired.text(secondId).text(), " ip ospf cost 20"),
+                            occurrences(repaired.text(firstId).text(), " ip ospf cost 30"),
+                            occurrences(repaired.text(secondId).text(), " ip ospf cost 30")))
+                .toList();
+
+    List<Integer> bothTwenty = List.of(2, 1, 0, 1);
+    List<Integer> bothThirty = List.of(1, 0, 1, 2);
+    List<Integer> oneEach = List.of(2, 0, 0, 2);
+    assertThat(costs).contains(bothTwenty, bothThirty, oneEach);
+    assertThat(costs.getFirst()).isEqualTo(bothTwenty);
+
+    List<Boolean> literal =
+        new IgpAdjacencyGenerator(seeds, closure)
+            .generate(latent.program(), latent.verification(), link).stream()
+                .map(hypothesis -> latent.snapshot().patch(hypothesis.transaction()).after())
+                .map(
+                    repaired ->
+                        !(repaired.text(firstId).text() + repaired.text(secondId).text())
+                            .replace("ip ospf network point-to-point", "")
+                            .contains("ip ospf network"))
+                .toList();
+    assertThat(literal)
+        .as("a network type no interface has comes after every profile the network holds")
+        .isSortedAccordingTo(Comparator.reverseOrder());
   }
 
   @Test
@@ -1992,6 +2502,39 @@ class GenerationTest {
                     .text(ONE)
                     .text()
                     .contains("ip address 10.0.0.2 255.255.255.255"));
+
+    Specification transit =
+        new Specification(
+            new ForwardingPredicate.Waypointing(three, Prefix.parse("10.0.0.2/32"), ONE),
+            Specification.Status.parse("broken_removed"));
+    Specification beyond =
+        new Specification(
+            new ForwardingPredicate.Waypointing(ONE, Prefix.parse("10.0.0.2/32"), TWO),
+            Specification.Status.parse("broken_removed"));
+    Verification transitVerification =
+        new Verification(
+            snapshot.id(),
+            new Verdict(List.of(protectedHost, transit, beyond), List.of(), List.of()),
+            DataPlaneEvidence.none());
+    assertThat(
+            IdentityRefactoring.verificationSeeds(
+                colliding.program(), transitVerification, firstLoopback))
+        .isEmpty();
+    assertThat(IdentityRefactoring.complete(colliding.program(), transitVerification, base))
+        .isEmpty();
+    List<List<EditOperator>> beyondSeeds =
+        IdentityRefactoring.verificationSeeds(
+            colliding.program(),
+            transitVerification,
+            new ProgramObject.Ref("interface", TWO, List.of("Loopback0")));
+    assertThat(beyondSeeds).hasSize(1);
+    assertThat(
+            snapshot
+                .patch(Hypothesis.of(snapshot, beyondSeeds.getFirst()).transaction())
+                .after()
+                .text(TWO)
+                .text())
+        .contains("ip address 10.0.0.2 255.255.255.255");
 
     Specification secondMissingHost =
         new Specification(
@@ -2421,6 +2964,135 @@ class GenerationTest {
 
     assertThat(admissibility.admit(redistribution, List.of(wrongProcess, localProcess)))
         .containsExactly(localProcess);
+  }
+
+  @Test
+  void noCandidateMovesARouterAwayFromItsDesignAutonomousSystem() {
+    java.util.function.Function<String, RepairState> numbered =
+        asn -> {
+          Snapshot snapshot =
+              Snapshot.of(
+                  Map.of(
+                      ONE + ".cfg",
+                      "hostname r1\nrouter bgp "
+                          + asn
+                          + "\n address-family ipv4\n exit-address-family\n"));
+          Topology topology = Topology.of(snapshot.routers(), List.of());
+          return RepairState.initial(
+              new RepairProblem("design", snapshot, topology, state.problem().specifications()),
+              new Verification(
+                  snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none()),
+              programs.model(snapshot, topology));
+        };
+    java.util.function.BiFunction<RepairState, String, Hypothesis> renumbered =
+        (from, asn) ->
+            new Hypothesis(
+                Transaction.of(
+                    from.snapshot(),
+                    List.of(
+                        new LineEdit.Replace(
+                            SourceSpan.line(ONE, 2), List.of("router bgp " + asn)))),
+                List.of());
+
+    RepairState designed = numbered.apply("65001");
+    assertThat(admissibility.admit(designed, List.of(renumbered.apply(designed, "65002"))))
+        .isEmpty();
+    RepairState faulty = numbered.apply("65002");
+    Hypothesis restored = renumbered.apply(faulty, "65001");
+    assertThat(admissibility.admit(faulty, List.of(restored))).containsExactly(restored);
+  }
+
+  @Test
+  void aSessionToARouterOffItsDesignAutonomousSystemIsRepairedAtThatRouter() {
+    RouterId peer = RouterId.of("2_as65001_r2");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                ONE + ".cfg",
+                """
+                hostname r1
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.0 255.255.255.254
+                router bgp 65001
+                 neighbor 10.1.0.1 remote-as 65001
+                """,
+                peer + ".cfg",
+                """
+                hostname r2
+                interface GigabitEthernet0/0
+                 ip address 10.1.0.1 255.255.255.254
+                router bgp 65009
+                 neighbor 10.1.0.0 remote-as 65001
+                """));
+    Topology topology = Topology.of(snapshot.routers(), List.of());
+    ProgramModel program = programs.model(snapshot, topology);
+    RelationInstance session =
+        program.instances("bgp-session").stream()
+            .filter(instance -> instance.roles().get("local").router().equals(ONE))
+            .findFirst()
+            .orElseThrow();
+    Requirement asn =
+        session.violated().stream()
+            .filter(requirement -> requirement.strength() == Requirement.Strength.HARD)
+            .findFirst()
+            .orElseThrow();
+
+    List<Hypothesis> hypotheses =
+        closure.close(
+            program,
+            new Verification(
+                snapshot.id(), state.verification().verdict(), DataPlaneEvidence.none()),
+            List.of(),
+            Set.of(new ClosureEngine.Obligation(session, asn)));
+
+    assertThat(hypotheses).isNotEmpty();
+    assertThat(hypotheses)
+        .as("r2's AS 65009 is not its design AS, so r1 does not follow it")
+        .noneMatch(
+            hypothesis ->
+                snapshot
+                    .patch(hypothesis.transaction())
+                    .after()
+                    .text(ONE)
+                    .text()
+                    .contains("remote-as 65009"));
+  }
+
+  @Test
+  void redistributingThroughASessionPolicyBreaksASoftRequirement() {
+    java.util.function.Function<String, List<String>> violated =
+        map -> {
+          Snapshot snapshot =
+              Snapshot.of(
+                  Map.of(
+                      ONE + ".cfg",
+                      """
+                      hostname r1
+                      router ospf 1
+                       router-id 10.0.0.1
+                       redistribute bgp 65001 subnets route-map %s
+                      router bgp 65001
+                       address-family ipv4
+                       exit-address-family
+                      route-map TRANSFER permit 10
+                       set tag 65010
+                      route-map IMPORT permit 10
+                       set local-preference 100
+                      """
+                          .formatted(map)));
+          return programs
+              .model(snapshot, Topology.of(snapshot.routers(), List.of()))
+              .instances("redistribution")
+              .getFirst()
+              .violated()
+              .stream()
+              .map(requirement -> requirement.strength() + " " + requirement.text())
+              .toList();
+        };
+
+    assertThat(violated.apply("TRANSFER")).isEmpty();
+    assertThat(violated.apply("IMPORT"))
+        .containsExactly("SOFT soft absent router.ospf-redistribution.path-attributes");
   }
 
   private static Hypothesis hypothesisOf(List<EditOperator> seed) {

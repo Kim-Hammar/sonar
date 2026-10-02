@@ -20,9 +20,11 @@ import se.kth.sonar.text.RouterId;
  *
  * <p>An explicit BGP cluster identity gives the reflector role. Same-AS routers with owned loopback
  * identities give the client domain, including a router whose design AS is known but whose BGP
- * process is absent. Existing sessions give the directional peer-group types and whether that type
- * uses next-hop-self. The relation therefore also represents pairs for which both session
- * directions are absent; it does not infer names or addresses from benchmark labels.
+ * process is absent, and excluding a router whose BGP process names another AS than its design: its
+ * membership is itself in doubt, so it is not wired into either system. Existing sessions give the
+ * directional peer-group types and whether that type uses next-hop-self. The relation therefore
+ * also represents pairs for which both session directions are absent; it does not infer names or
+ * addresses from benchmark labels.
  *
  * @param reflector the router object with an explicit cluster identity
  * @param clients the client router objects whose incidence with the reflector is incomplete
@@ -124,9 +126,13 @@ public record BgpIncidenceSet(
     Map<RouterId, ProgramObject> routers = routers(program);
     Map<String, List<ProgramObject>> byAs = new LinkedHashMap<>();
     for (ProgramObject router : routers.values()) {
-      router
-          .value("bgp-asn")
-          .or(() -> router.value("design-asn"))
+      Optional<String> configured = router.value("bgp-asn");
+      Optional<String> designed = router.value("design-asn");
+      if (configured.isPresent() && designed.isPresent() && !configured.equals(designed)) {
+        continue;
+      }
+      configured
+          .or(() -> designed)
           .ifPresent(asn -> byAs.computeIfAbsent(asn, ignored -> new ArrayList<>()).add(router));
     }
     List<BgpIncidenceSet> result = new ArrayList<>();

@@ -16,6 +16,29 @@ public record Specification(ForwardingPredicate predicate, Status status) {
     Objects.requireNonNull(status, "status");
   }
 
+  /**
+   * Returns whether a repaired network must keep the source's traffic from the destination: an
+   * isolation that must hold, or a reachability that must not.
+   */
+  public boolean forbidsDelivery() {
+    return switch (predicate) {
+      case ForwardingPredicate.Isolation _ -> status.expectPresent();
+      case ForwardingPredicate.Reachability _ -> !status.expectPresent();
+      default -> false;
+    };
+  }
+
+  /**
+   * Returns whether a repaired network must deliver the source's traffic to the destination: a
+   * reachability, waypointing or load balancing that must hold, or an isolation that must not.
+   */
+  public boolean requiresDelivery() {
+    return switch (predicate) {
+      case ForwardingPredicate.Isolation _ -> !status.expectPresent();
+      default -> status.expectPresent();
+    };
+  }
+
   /** Whether a predicate held in the faulty network as the specification requires. */
   public enum Condition {
     INTACT,

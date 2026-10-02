@@ -147,6 +147,7 @@ class SearchRoutesTest {
             "first-match-dominance",
             "counterexample",
             "policy-cut",
+            "path-differential",
             "frontier",
             "drop");
     JsonNode summary = search.path("summary");
@@ -183,6 +184,7 @@ class SearchRoutesTest {
               "first-match-dominance",
               "counterexample",
               "policy-cut",
+              "path-differential",
               "frontier",
               "drop");
       assertThat(row.path("partition").asText()).isNotEmpty();

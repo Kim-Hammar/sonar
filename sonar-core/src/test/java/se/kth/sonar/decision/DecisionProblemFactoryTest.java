@@ -158,6 +158,30 @@ class DecisionProblemFactoryTest {
   }
 
   @Test
+  void aSpecificationExpectedAbsentIsDescribedAsTheOppositeObligation() {
+    Specification forbidden =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R1, Prefix.parse("10.0.0.2/32"), R2),
+            Specification.Status.parse("broken_added"));
+    Specification required =
+        new Specification(
+            new ForwardingPredicate.Waypointing(R2, Prefix.parse("10.0.0.1/32"), R1),
+            Specification.Status.parse("broken_removed"));
+    Region region =
+        new SiteRegion(
+            new Region.Id("site:r2"),
+            new ProgramObject.Ref("bgp-neighbor", R2, List.of("10.0.0.1")),
+            List.of(forbidden, required),
+            Map.of(),
+            new Region.Hypotheses.Admitted(List.of(fix())));
+    DecisionProblem.HypothesisChoice question =
+        new DecisionProblemFactory(60_000).hypothesisChoice(state, region, List.of());
+    assertThat(question.context().sections().get(1).body())
+        .contains("1_as65001_r1 must not reach 10.0.0.2/32 via 2_as65001_r2")
+        .contains("2_as65001_r2 reaches 10.0.0.1/32 via 1_as65001_r1");
+  }
+
+  @Test
   void aHypothesisChoiceDescribesEachEditAndWhatItRestores() {
     SearchSpace space = space();
     Region region = space.region(new Region.Id("relation:session")).orElseThrow();

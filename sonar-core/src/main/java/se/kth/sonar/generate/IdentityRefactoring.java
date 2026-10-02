@@ -317,7 +317,11 @@ public final class IdentityRefactoring {
     return Set.copyOf(result);
   }
 
-  /** Returns the unique unowned positive /32 endpoint required through {@code router}. */
+  /**
+   * Returns the unique unowned positive /32 endpoint required through {@code router} that the
+   * router can own. A router that must itself reach the endpoint through another router lies on the
+   * way to the endpoint's owner and is not that owner.
+   */
   private static Optional<String> requiredUnownedHostIdentity(
       ProgramModel program, Verification verification, RouterId router) {
     Set<String> owned = new HashSet<>();
@@ -325,20 +329,25 @@ public final class IdentityRefactoring {
       owned.addAll(object.values("address"));
     }
     Set<String> required = new HashSet<>();
+    Set<String> reachedThroughAnother = new HashSet<>();
     List<Specification> failures = new ArrayList<>(verification.verdict().unresolved());
     failures.addAll(verification.verdict().sideEffects());
     for (Specification specification : failures) {
       if (!specification.status().expectPresent()
           || !(specification.predicate() instanceof ForwardingPredicate.Waypointing waypoint)
-          || !waypoint.waypoint().equals(router)
           || waypoint.destination().length() != 32) {
         continue;
       }
       String address = waypoint.destination().network().toString();
-      if (!owned.contains(address)) {
-        required.add(address);
+      if (waypoint.waypoint().equals(router)) {
+        if (!owned.contains(address)) {
+          required.add(address);
+        }
+      } else if (waypoint.source().equals(router)) {
+        reachedThroughAnother.add(address);
       }
     }
+    required.removeAll(reachedThroughAnother);
     return required.size() == 1 ? Optional.of(required.iterator().next()) : Optional.empty();
   }
 

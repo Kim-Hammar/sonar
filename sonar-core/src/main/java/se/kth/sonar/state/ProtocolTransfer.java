@@ -133,13 +133,14 @@ public record ProtocolTransfer(
     return List.copyOf(result);
   }
 
-  /*
-   * Finds existing policies that certainly reject an accepted route on the exact first BGP edge.
+  /**
+   * Finds existing policies that certainly reject an accepted route on a BGP edge of its path.
    *
-   * <p>A forbidden accepted path can be stopped either on import at its source or on export at its
-   * first hop. Address ownership identifies the corresponding neighbor object. Only a policy whose
-   * typed first-match semantics rejects the destination is retained, and only when that direction
-   * currently has no attachment.
+   * <p>A forbidden accepted path can be stopped on its first edge, either on import at its source
+   * or on export at its first hop, and likewise on every later edge that crosses between autonomous
+   * systems, where policies decide what is exchanged. Address ownership identifies the
+   * corresponding neighbor object. Only a policy whose typed first-match semantics rejects the
+   * destination is retained, and only when that direction currently has no attachment.
    */
   private static List<ProtocolTransfer> forbiddenAttachments(RepairState state) {
     Map<AttachmentKey, LinkedHashSet<Specification>> targets = new LinkedHashMap<>();
@@ -160,24 +161,29 @@ public record ProtocolTransfer(
         if (!forbidden) {
           continue;
         }
-        RouterId source = trace.hops().get(0);
-        RouterId firstHop = trace.hops().get(1);
-        addAttachments(
-            state,
-            source,
-            firstHop,
-            "in",
-            specification,
-            specification.predicate().destination(),
-            targets);
-        addAttachments(
-            state,
-            firstHop,
-            source,
-            "out",
-            specification,
-            specification.predicate().destination(),
-            targets);
+        for (int at = 0; at + 1 < trace.hops().size(); at++) {
+          RouterId receiver = trace.hops().get(at);
+          RouterId sender = trace.hops().get(at + 1);
+          if (at > 0 && !BgpPeering.external(state.program(), receiver, sender)) {
+            continue;
+          }
+          addAttachments(
+              state,
+              receiver,
+              sender,
+              "in",
+              specification,
+              specification.predicate().destination(),
+              targets);
+          addAttachments(
+              state,
+              sender,
+              receiver,
+              "out",
+              specification,
+              specification.predicate().destination(),
+              targets);
+        }
       }
     }
     List<ProtocolTransfer> result = new ArrayList<>();
@@ -230,15 +236,8 @@ public record ProtocolTransfer(
     Set<RouterId> holders = evidence.routeHolders().getOrDefault(predicate.destination(), Set.of());
     Set<RouterId> candidates = new LinkedHashSet<>();
     if (RouterEvidence.noRouteAtSource(evidence, predicate)) {
-      for (RouterEvidence.Link frontier :
-          routerEvidence.routeFrontier(predicate.source(), predicate.destination())) {
-        if (holders.contains(frontier.first())) {
-          candidates.add(frontier.first());
-        }
-        if (holders.contains(frontier.second())) {
-          candidates.add(frontier.second());
-        }
-      }
+      candidates.addAll(
+          routerEvidence.transferBoundary(predicate.source(), predicate.destination()));
     }
     if (predicate instanceof ForwardingPredicate.Waypointing waypointing) {
       for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {

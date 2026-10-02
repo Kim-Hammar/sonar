@@ -2,17 +2,24 @@ package se.kth.sonar.app.audit;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import se.kth.sonar.app.Pipeline;
 import se.kth.sonar.batfish.BatfishEngine;
+import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.common.Distribution;
 import se.kth.sonar.dataset.ScenarioRepository;
 import se.kth.sonar.decision.DecisionProblem;
@@ -25,7 +32,10 @@ import se.kth.sonar.execution.ResourcePool;
 import se.kth.sonar.jev.JevRequestCodec;
 import se.kth.sonar.network.Snapshot;
 import se.kth.sonar.network.Transaction;
+import se.kth.sonar.program.ProgramModel;
+import se.kth.sonar.program.RelationInstance;
 import se.kth.sonar.relation.Dialect;
+import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.search.Partition;
 import se.kth.sonar.search.Region;
 import se.kth.sonar.search.SearchSpace;
@@ -40,7 +50,12 @@ import se.kth.sonar.verify.VerificationService;
 
 /**
  * Prints the prior over the regions of one scenario, factor by factor, optionally after applying
- * one line replacement given as {@code sonar.probe.edit=router:line:text}.
+ * line replacements given as {@code sonar.probe.edit=router:line:text}, several separated by {@code
+ * ;;}, or after replaying the first {@code sonar.probe.epoch} adoptions of the scenario recorded in
+ * the run directory {@code sonar.probe.run}, except the adoption numbered {@code sonar.probe.skip}.
+ * Line replacements given as {@code sonar.probe.then} are applied after the replay, to the lines as
+ * they are then, and the relation instances they make violated are printed. Regions whose
+ * identifier contains {@code sonar.audit.focus} are printed with their rank wherever they are.
  */
 @Tag("audit")
 class PriorProbe {
@@ -69,18 +84,32 @@ class PriorProbe {
           scenarios.load(name, Integer.getInteger("sonar.probe.specifications", 100));
       Snapshot snapshot = problem.initial();
       if (!edit.isEmpty()) {
-        String[] parts = edit.split(":", 3);
-        RouterId router = RouterId.of(parts[0]);
-        int line = Integer.parseInt(parts[1]);
-        snapshot =
-            snapshot
-                .patch(
-                    Transaction.of(
-                        snapshot,
-                        List.of(
-                            new LineEdit.Replace(
-                                new SourceSpan(router, line, line), List.of(parts[2])))))
-                .after();
+        snapshot = snapshot.patch(Transaction.of(snapshot, replacements(edit))).after();
+      }
+      String run = System.getProperty("sonar.probe.run", "");
+      if (!run.isEmpty()) {
+        snapshot = replay(snapshot, Path.of(run), name, Integer.getInteger("sonar.probe.epoch", 0));
+      }
+      String then = System.getProperty("sonar.probe.then", "");
+      if (!then.isEmpty()) {
+        ProgramModel before = epochs.programs().model(snapshot, problem.topology());
+        snapshot = snapshot.patch(Transaction.of(snapshot, replacements(then))).after();
+        Set<ContentHash> satisfied = new HashSet<>();
+        before.instances().stream()
+            .filter(RelationInstance::satisfied)
+            .forEach(instance -> satisfied.add(instance.id()));
+        for (RelationInstance instance :
+            epochs.programs().model(snapshot, problem.topology(), Optional.of(before)).violated()) {
+          if (satisfied.contains(instance.id())) {
+            System.out.println(
+                "breaks "
+                    + instance.relation()
+                    + " "
+                    + instance.roles()
+                    + " "
+                    + instance.violated().stream().map(Requirement::text).toList());
+          }
+        }
       }
       Verification verification = verifier.verify(snapshot, problem.specifications());
       Epoch epoch =
@@ -97,9 +126,14 @@ class PriorProbe {
       Distribution<Region.Id> prior = epochs.prior(epoch);
       List<Region> ranked = new ArrayList<>(space.regions());
       ranked.sort(Comparator.comparingDouble((Region r) -> -prior.probability(r.id())));
-      for (Region region : ranked.subList(0, Math.min(SHOWN, ranked.size()))) {
+      String focus = System.getProperty("sonar.audit.focus", "");
+      for (int rank = 0; rank < ranked.size(); rank++) {
+        Region region = ranked.get(rank);
+        if (rank >= SHOWN && (focus.isEmpty() || !region.id().value().contains(focus))) {
+          continue;
+        }
         StringBuilder line = new StringBuilder();
-        line.append(String.format("%.4f", prior.probability(region.id())))
+        line.append(String.format("%4d  %.5f", rank, prior.probability(region.id())))
             .append("  ")
             .append(region.id())
             .append("  targets ")
@@ -135,5 +169,87 @@ class PriorProbe {
       System.out.println(
           "request " + new JevRequestCodec("jev").encode(question).body().length() + " characters");
     }
+  }
+
+  /** Reads line replacements written as {@code router:line:text}, separated by {@code ;;}. */
+  private static List<LineEdit> replacements(String text) {
+    List<LineEdit> edits = new ArrayList<>();
+    for (String each : text.split(";;", -1)) {
+      String[] parts = each.strip().split(":", 3);
+      int line = Integer.parseInt(parts[1]);
+      edits.add(
+          new LineEdit.Replace(
+              new SourceSpan(RouterId.of(parts[0]), line, line), List.of(parts[2])));
+    }
+    return edits;
+  }
+
+  /**
+   * Returns {@code snapshot} after the first {@code epochs} adoptions of {@code name} recorded in
+   * the run at {@code run}. An adoption that replaced an earlier one is not replayed faithfully.
+   */
+  private static Snapshot replay(Snapshot snapshot, Path run, String name, int epochs)
+      throws IOException {
+    ObjectMapper mapper = new ObjectMapper();
+    Set<Long> adoptions = new HashSet<>();
+    for (String line : Files.readAllLines(run.resolve("events.jsonl"))) {
+      JsonNode event = mapper.readTree(line);
+      if (event.path("scenario").asText().equals(name)
+          && event.path("type").asText().equals("adopted")
+          && event.path("epoch").asInt() <= epochs
+          && event.path("epoch").asInt() != Integer.getInteger("sonar.probe.skip", -1)) {
+        adoptions.add(event.path("seq").asLong());
+      }
+    }
+    for (String line : Files.readAllLines(run.resolve("details.jsonl"))) {
+      if (!line.contains("\"type\":\"adopted\"")) {
+        continue;
+      }
+      JsonNode detail = mapper.readTree(line);
+      if (!adoptions.contains(detail.path("seq").asLong())) {
+        continue;
+      }
+      Snapshot adopted = snapshot;
+      for (JsonNode hypothesis : detail.path("hypotheses")) {
+        Transaction transaction = Transaction.of(snapshot, edits(hypothesis.path("edits")));
+        if (!adopted.equals(snapshot)) {
+          transaction = transaction.rebaseOver(delta(snapshot, adopted)).orElseThrow();
+        }
+        adopted = adopted.patch(transaction).after();
+      }
+      snapshot = adopted;
+    }
+    return snapshot;
+  }
+
+  private static List<LineEdit> edits(JsonNode nodes) {
+    List<LineEdit> edits = new ArrayList<>();
+    for (JsonNode node : nodes) {
+      RouterId router = RouterId.of(node.path("router").asText());
+      List<String> lines = new ArrayList<>();
+      node.path("lines").forEach(line -> lines.add(line.asText()));
+      edits.add(
+          switch (node.path("op").asText()) {
+            case "delete" -> new LineEdit.Delete(span(router, node));
+            case "replace" -> new LineEdit.Replace(span(router, node), lines);
+            case "insert" -> new LineEdit.InsertAfter(router, node.path("after").asInt(), lines);
+            default -> new LineEdit.Append(router, lines);
+          });
+    }
+    return edits;
+  }
+
+  private static SourceSpan span(RouterId router, JsonNode node) {
+    return new SourceSpan(router, node.path("first").asInt(), node.path("last").asInt());
+  }
+
+  private static Snapshot.Delta delta(Snapshot before, Snapshot after) {
+    TreeSet<RouterId> changed = new TreeSet<>();
+    for (RouterId router : after.routers()) {
+      if (!before.text(router).digest().equals(after.text(router).digest())) {
+        changed.add(router);
+      }
+    }
+    return new Snapshot.Delta(before, after, changed);
   }
 }

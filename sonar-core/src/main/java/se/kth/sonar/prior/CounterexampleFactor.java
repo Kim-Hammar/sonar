@@ -24,8 +24,11 @@ import se.kth.sonar.search.TransferRegion;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.state.BgpSessionCut;
+import se.kth.sonar.state.ForbiddenDelivery;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.state.RouterEvidence;
+import se.kth.sonar.state.SessionPolicy;
+import se.kth.sonar.state.WaypointDetour;
 import se.kth.sonar.text.RouterId;
 import se.kth.sonar.verify.DataPlaneEvidence;
 
@@ -37,16 +40,27 @@ import se.kth.sonar.verify.DataPlaneEvidence;
  * the source and required waypoint are operands of the obligation itself. A no-route trace that
  * stops at its source identifies its exact origin slice and the sessions crossing the observed
  * route-propagation boundary. Only when neither slice exists is the source's local route program
- * the residual explanation. The origin slice includes the interface or route object that owns the
- * destination and, when an exact static route has no matching BGP origin, the same-prefix BGP
- * origin statements that can materialise the missing relation. A boundary session is identified by
- * joining its peer address to interface ownership, rather than by router proximity. For a
+ * the residual explanation. A relation of the source's router object is where that program is known
+ * to be incomplete, so it weighs with the reduction from every router to the sources left without
+ * an explanation; the router object as a whole weighs without it. The origin slice includes the
+ * interface or route object that owns the destination and, when an exact static route has no
+ * matching BGP origin, the same-prefix BGP origin statements that can materialise the missing
+ * relation. When nothing originates the destination exactly, the interfaces whose subnet holds it
+ * or lies in it are where it would originate under another mask. A boundary session is identified
+ * by joining its peer address to interface ownership, rather than by router proximity. For a
  * path-diversity deficit, an unused physical next hop that already holds the route identifies a
  * possible protocol-transfer boundary; typed route-map evaluation then retains only policies that
- * permit that destination. Each distinct violated predicate contributes one observation. A matching
- * region with {@code n} observations receives the Jeffreys odds {@code (n + 1/2) / (1/2)};
- * unrelated regions retain weight one. This is deliberately narrower than topology proximity: it
- * uses only relations present in the specification or observed by the verifier.
+ * permit that destination. For a delivered path that bypasses its required waypoint, a BGP session
+ * between the waypoint and a router on the path is where the path could have turned, and the
+ * policies that set the attributes of the route along that session decide whether it does. For a
+ * delivery that must not happen, the sessions between autonomous systems on its path are where the
+ * route was let through, except those over which a satisfied obligation has the same destination
+ * delivered, and attaching a rejecting policy to such a session weighs as the session does. When no
+ * obligation requires a delivery to that destination from anywhere, what originates it weighs as
+ * the origin of a missing route does. Each distinct violated predicate contributes one observation.
+ * A matching region with {@code n} observations receives the Jeffreys odds {@code (n + 1/2) /
+ * (1/2)}; unrelated regions retain weight one. This is deliberately narrower than topology
+ * proximity: it uses only relations present in the specification or observed by the verifier.
  */
 public final class CounterexampleFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -60,6 +74,9 @@ public final class CounterexampleFactor implements PriorFactor {
       Map<ProgramObject.Ref, Integer> noRouteOrigins,
       Map<ProgramObject.Ref, Integer> boundarySites,
       Map<ProgramObject.Ref, Integer> waypointSessions,
+      Map<ProgramObject.Ref, Integer> detourPolicies,
+      Map<ProgramObject.Ref, Integer> forbiddenPolicies,
+      Map<ProgramObject.Ref, Integer> forbiddenOrigins,
       Map<ContentHash, Integer> sessionCuts,
       Map<ProgramObject.Ref, Integer> transfers) {}
 
@@ -78,15 +95,21 @@ public final class CounterexampleFactor implements PriorFactor {
   public double weight(Region region, RepairState state) {
     Evidence evidence = observations.get(state.verification().digest(), () -> observations(state));
     double weight = 1;
-    if (region instanceof SiteRegion site && site.site().type().equals(ObjectType.ROUTER)) {
-      int count = evidence.noRouteSources().getOrDefault(site.site().router(), 0);
-      if (count > 0) {
-        weight = (count + HALF) / HALF;
+    for (ProgramObject.Ref object : anchors(region)) {
+      int count = evidence.noRouteSources().getOrDefault(object.router(), 0);
+      if (object.type().equals(ObjectType.ROUTER) && count > 0) {
+        long universe = Math.max(1, state.program().objects(ObjectType.ROUTER).size());
+        double reduction =
+            region instanceof RelationRegion
+                ? (double) universe / evidence.noRouteSources().size()
+                : 1;
+        weight = Math.max(weight, reduction * (count + HALF) / HALF);
       }
     }
     if (region instanceof SiteRegion site) {
       int count = evidence.noRouteOrigins().getOrDefault(site.site(), 0);
       count = Math.max(count, evidence.boundarySites().getOrDefault(site.site(), 0));
+      count = Math.max(count, evidence.forbiddenOrigins().getOrDefault(site.site(), 0));
       if (count > 0) {
         weight = Math.max(weight, (count + HALF) / HALF);
       }
@@ -96,12 +119,17 @@ public final class CounterexampleFactor implements PriorFactor {
         double reduction = (double) universe / evidence.waypointSessions().size();
         weight = Math.max(weight, reduction * (sessions + HALF) / HALF);
       }
+      for (Map<ProgramObject.Ref, Integer> policies :
+          List.of(evidence.detourPolicies(), evidence.forbiddenPolicies())) {
+        weight = Math.max(weight, crossingWeight(policies, site.site(), state));
+      }
     }
     if (region instanceof RelationRegion relation) {
       int count = 0;
       for (ProgramObject.Ref role : relation.instance().roles().values()) {
         count = Math.max(count, evidence.noRouteOrigins().getOrDefault(role, 0));
         count = Math.max(count, evidence.boundarySites().getOrDefault(role, 0));
+        count = Math.max(count, evidence.forbiddenOrigins().getOrDefault(role, 0));
       }
       if (count > 0) {
         double reduction =
@@ -141,6 +169,15 @@ public final class CounterexampleFactor implements PriorFactor {
       if (count > 0) {
         weight = Math.max(weight, (count + HALF) / HALF);
       }
+      if (transfer.transfer().attachment().isPresent()) {
+        weight =
+            Math.max(
+                weight,
+                crossingWeight(
+                    evidence.forbiddenPolicies(),
+                    transfer.transfer().attachment().get().neighbor(),
+                    state));
+      }
     }
     int missingSessionObservations = missingSessionObservations(region, evidence.relations());
     if (missingSessionObservations > 0) {
@@ -158,6 +195,31 @@ public final class CounterexampleFactor implements PriorFactor {
       }
     }
     return weight;
+  }
+
+  /** Returns the objects a site or relation region is about: its site, or its roles. */
+  private static Set<ProgramObject.Ref> anchors(Region region) {
+    return switch (region) {
+      case SiteRegion site -> Set.of(site.site());
+      case RelationRegion relation -> Set.copyOf(relation.instance().roles().values());
+      default -> Set.of();
+    };
+  }
+
+  /**
+   * Returns the weight {@code object} has as part of the session policy slices {@code policies}:
+   * the Jeffreys odds of its observations times the reduction from every session policy object to
+   * the slices, or one if it is in none.
+   */
+  private static double crossingWeight(
+      Map<ProgramObject.Ref, Integer> policies, ProgramObject.Ref object, RepairState state) {
+    int crossings = policies.getOrDefault(object, 0);
+    if (crossings == 0) {
+      return 1;
+    }
+    long universe =
+        SessionPolicy.TYPES.stream().mapToLong(type -> state.program().objects(type).size()).sum();
+    return (double) universe / policies.size() * (crossings + HALF) / HALF;
   }
 
   /**
@@ -242,9 +304,7 @@ public final class CounterexampleFactor implements PriorFactor {
         } else if (!specification.status().expectPresent() && observed) {
           addForbiddenWaypointChoices(state, specification, boundarySites);
         }
-      } else if (predicate instanceof ForwardingPredicate.Isolation
-          || (predicate instanceof ForwardingPredicate.Reachability
-              && !specification.status().expectPresent())) {
+      } else if (specification.forbidsDelivery()) {
         for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {
           if (trace.disposition() == DataPlaneEvidence.Disposition.ACCEPTED
               && trace.hops().size() >= 2) {
@@ -275,6 +335,9 @@ public final class CounterexampleFactor implements PriorFactor {
         Map.copyOf(noRouteOrigins),
         Map.copyOf(boundarySites),
         Map.copyOf(waypointSessions),
+        WaypointDetour.policies(state),
+        ForbiddenDelivery.policies(state),
+        ForbiddenDelivery.origins(state),
         Map.copyOf(sessionCuts),
         Map.copyOf(transfers));
   }
@@ -515,6 +578,16 @@ public final class CounterexampleFactor implements PriorFactor {
         }
       }
     }
+    if (origins.isEmpty() && destination.length() > 0) {
+      for (ProgramObject object : program.objects("interface")) {
+        if (object.values("subnet").stream()
+            .map(Prefix::tryParse)
+            .flatMap(Optional::stream)
+            .anyMatch(subnet -> subnet.contains(destination) || destination.contains(subnet))) {
+          origins.add(object.ref());
+        }
+      }
+    }
     for (ProgramObject object : program.objects("bgp-network")) {
       if (missingBgpOrigins.contains(object.ref().router())
           && object.values("prefix").stream()
@@ -538,15 +611,8 @@ public final class CounterexampleFactor implements PriorFactor {
     Set<RouterId> holders = evidence.routeHolders().getOrDefault(predicate.destination(), Set.of());
     Set<RouterId> candidates = new HashSet<>();
     if (RouterEvidence.noRouteAtSource(evidence, predicate)) {
-      for (RouterEvidence.Link frontier :
-          routerEvidence.routeFrontier(predicate.source(), predicate.destination())) {
-        if (holders.contains(frontier.first())) {
-          candidates.add(frontier.first());
-        }
-        if (holders.contains(frontier.second())) {
-          candidates.add(frontier.second());
-        }
-      }
+      candidates.addAll(
+          routerEvidence.transferBoundary(predicate.source(), predicate.destination()));
     }
     if (predicate instanceof ForwardingPredicate.Waypointing waypointing) {
       for (DataPlaneEvidence.Trace trace : evidence.traces().getOrDefault(predicate, List.of())) {

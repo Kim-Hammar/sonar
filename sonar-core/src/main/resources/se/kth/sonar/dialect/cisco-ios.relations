@@ -14,6 +14,7 @@ object router
   attribute isis-net = isis-net.net
   attribute isis-level = isis-is-type.level
   attribute isis-area derived isis-area word
+  attribute isis-attached derived isis-attached flag
   attribute design-asn derived design-asn asn
   attribute loopback-address derived loopback-address address
   attribute loopback-wildcard derived loopback-wildcard wildcard
@@ -69,6 +70,7 @@ object bgp-network
 object ospf-network
   key network wildcard from ospf-network
   attribute area = ospf-network.area
+  attribute prefix derived wildcard-prefix prefix
   attribute covered derived ospf-coverage ref interface
 
 object static-route
@@ -80,6 +82,9 @@ object static-route
 object route-map
   key name from route-map
   attribute used derived route-map-use flag
+  attribute path-attributes derived route-map-path-attributes flag
+  attribute import-attributes derived route-map-import-attributes flag
+  attribute export-attributes derived route-map-export-attributes flag
 
 object route-map-entry
   key name sequence from route-map
@@ -139,6 +144,8 @@ relation bgp-policy
   require hard resolves neighbor.update-source
   require hard resolves neighbor.route-map-in
   require hard resolves neighbor.route-map-out
+  require soft absent neighbor.route-map-in.export-attributes
+  require soft absent neighbor.route-map-out.import-attributes
 
 relation peer-group-policy
   role group peer-group each
@@ -206,14 +213,19 @@ relation redistribution
   role router router each
   require hard resolves router.ospf-redistribution
   require hard equal router.ospf-redistributed-asn router.bgp-asn when router.ospf-redistributed-asn
+  require soft absent router.ospf-redistribution.path-attributes
 
 relation route-map-liveness
   role map route-map each
   require soft exists map.used
 
+relation isis-attachment
+  role router router each
+  require soft exists router.isis-attached when router.isis-process
+
 relation bgp-design
   role router router each
-  require soft equal router.bgp-asn router.design-asn when router.bgp-asn
+  require hard equal router.bgp-asn router.design-asn when router.bgp-asn
 
 relation router-identity
   role router router each
@@ -227,10 +239,14 @@ relation router-identity
 relation ospf-coverage
   role network ospf-network each
   require convention exists network.covered
+  require convention equal network.prefix network.covered.subnet when network.covered
 
 relation ospf-loopback-origination
   role router router each
+  role loopback interface optional
   role network ospf-network optional
+  join loopback.router = router
+  join loopback.address = router.loopback-address
   join network.router = router
   join network.network = router.loopback-address
   join network.wildcard = router.loopback-wildcard
@@ -265,11 +281,14 @@ domain ip-address mask values interface.mask in neighbours
 domain ip-ospf-area area related link b.ospf-effective-area
 domain ip-ospf-area area values interface.ospf-area in router
 domain ip-ospf-area process values router.ospf-process in router
+domain ip-ospf-cost cost related link b.ospf-cost
 domain ip-ospf-cost cost values interface.ospf-cost in neighbours
+domain ip-ospf-network type related link b.ospf-network-type
 domain ip-ospf-network type observed in network
 domain ip-ospf-network type literals
 domain isis-circuit-type level literals
 domain isis-is-type level literals
+domain isis-metric metric related link b.isis-metric
 domain isis-metric metric values interface.isis-metric in neighbours
 domain ip-access-group acl names acl in router
 domain ip-access-group direction literals

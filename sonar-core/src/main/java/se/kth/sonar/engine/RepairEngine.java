@@ -113,6 +113,7 @@ public final class RepairEngine implements Repairer {
     private final EpochBuilder epochs;
     private final List<Transaction> adopted = new ArrayList<>();
     private final Map<ProgramObject.Ref, Integer> nearMisses = new HashMap<>();
+    private final List<Hypothesis> inert = new ArrayList<>();
     private final Set<ContentHash> verifierRejected = new LinkedHashSet<>();
     private Epoch epoch;
     private BeliefState belief;
@@ -253,6 +254,8 @@ public final class RepairEngine implements Repairer {
         tested.add(hypothesis.id());
         if (verification.verdict().improvesOn(epoch.state().verification().verdict())) {
           improvements.add(new Adoption.Verified(hypothesis, verification));
+        } else if (change == Verdict.Change.NO_EFFECT) {
+          inert.add(hypothesis);
         } else if (change == Verdict.Change.MIXED) {
           if (verification.verdict().unresolved().size()
               < epoch.state().verification().verdict().unresolved().size()) {
@@ -263,10 +266,19 @@ public final class RepairEngine implements Repairer {
           }
         }
       }
+      if (improvements.isEmpty()) {
+        for (Adoption.Verified mixed : mixedImprovements) {
+          Optional<Adoption.Verified> part = components.adoption().part(epoch.state(), mixed);
+          if (part.isPresent()) {
+            improvements.add(part.get());
+            break;
+          }
+        }
+      }
       Optional<Adoption.Adopted> adoption =
           improvements.isEmpty()
               ? Optional.empty()
-              : components.adoption().adopt(epoch.state(), improvements);
+              : components.adoption().adopt(epoch.state(), improvements, inert);
       if (adoption.isPresent()) {
         if (!adoption.get().verification().verdict().solved()) {
           int beforeReplacement = now();
@@ -297,7 +309,8 @@ public final class RepairEngine implements Repairer {
 
     /**
      * Replaces one earlier greedy improvement when a mixed candidate becomes a clean improvement
-     * without it.
+     * without it. A replay the budget cannot verify ends the attempt and leaves the state as it is,
+     * so that an improvement verified already can still be adopted.
      */
     private Optional<RepairResult.Stop> replaceCounterfactually(
         List<Adoption.Verified> candidates, boolean requireCandidateDominance) {
@@ -320,8 +333,7 @@ public final class RepairEngine implements Repairer {
             CounterfactualReplacement.alternatives(
                 problem.initial(), adopted, candidate.hypothesis())) {
           if (!affordable(alternative.snapshot())) {
-            return Optional.of(
-                new RepairResult.Stop.BudgetExhausted(Budget.Resource.VERIFICATIONS));
+            return Optional.empty();
           }
           Verification verification = verify(alternative.snapshot());
           if (!verification.verdict().improvesOn(epoch.state().verification().verdict())
@@ -348,6 +360,7 @@ public final class RepairEngine implements Repairer {
       epoch = epochs.advance(epoch, snapshot, verification);
       TraceSink.emit(new TraceEvent.Adopted(now(), hypotheses, verification));
       nearMisses.clear();
+      inert.clear();
       if (epoch.state().solved()) {
         return;
       }

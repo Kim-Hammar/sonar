@@ -207,13 +207,14 @@ public final class Pipeline implements AutoCloseable {
 
   private RepairEngine.Components components(Dialect dialect) {
     VerificationService verifier = new VerificationService(engines, context);
+    EpochBuilder epochs = epochs(dialect, context);
     return new RepairEngine.Components(
-        epochs(dialect, context),
+        epochs,
         verifier,
         new DecisionProblemFactory(PAYLOAD_LIMIT),
         new DecisionService(models, context),
         new BeliefModel(),
         new GreedyPolicy(),
-        new Adoption(verifier));
+        new Adoption(verifier, epochs.programs()));
   }
 }
