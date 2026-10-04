@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,6 +30,8 @@ import se.kth.sonar.app.RunStatus;
 import se.kth.sonar.app.RunStore;
 import se.kth.sonar.app.Versions;
 import se.kth.sonar.app.Workspace;
+import se.kth.sonar.app.theta.ThetaFigure;
+import se.kth.sonar.app.theta.ThetaReport;
 import se.kth.sonar.common.NotImplemented;
 import se.kth.sonar.engine.BenchmarkRunner;
 import se.kth.sonar.execution.Budget;
@@ -43,7 +46,7 @@ import se.kth.sonar.web.WebServer;
     mixinStandardHelpOptions = true,
     versionProvider = SonarCli.Version.class,
     description = "SONAR: Search-Optimal Network Agentic Repair.",
-    subcommands = {SonarCli.Repair.class, SonarCli.Serve.class})
+    subcommands = {SonarCli.Repair.class, SonarCli.Serve.class, SonarCli.Theta.class})
 public final class SonarCli implements Runnable {
   static final int NOT_IMPLEMENTED = 3;
   static final String DATASET = "dataset/main_dataset";
@@ -136,6 +139,76 @@ public final class SonarCli implements Runnable {
     HttpTransport.Settings settings() {
       HttpTransport.Settings defaults = HttpTransport.Settings.openRouter();
       return new HttpTransport.Settings(endpoint, model, apiKeyVariable, defaults.timeout());
+    }
+  }
+
+  /** Estimates each decision model's θ from recorded runs and writes the comparison figure. */
+  @Command(
+      name = "theta",
+      mixinStandardHelpOptions = true,
+      description =
+          "Estimates θ of the search function q(r, θ) = 1 - exp(-θ r) for decision models from"
+              + " recorded runs.")
+  static final class Theta implements Callable<Integer> {
+    @Option(
+        names = "--model-runs",
+        required = true,
+        paramLabel = "NAME=DIR",
+        description =
+            "A model's display name and its runs: a run directory or a directory of runs."
+                + " Repeat for each model.")
+    private Map<String, Path> runs = new LinkedHashMap<>();
+
+    @Option(
+        names = "--output",
+        required = true,
+        paramLabel = "DIR",
+        description = "Where to write theta.json, observations.csv and theta.tex.")
+    private Path output;
+
+    @Option(
+        names = "--seed",
+        defaultValue = "0",
+        paramLabel = "N",
+        description = "Seed of the bootstrap (default: ${DEFAULT-VALUE}).")
+    private long seed;
+
+    @Spec private CommandSpec spec;
+
+    @Override
+    public Integer call() throws IOException {
+      PrintWriter out = spec.commandLine().getOut();
+      List<ThetaFigure.Series> series;
+      try {
+        series = ThetaReport.write(runs, output, seed);
+      } catch (IllegalArgumentException e) {
+        spec.commandLine().getErr().println(e.getMessage());
+        return 1;
+      }
+      out.printf(
+          Locale.ROOT,
+          "%-24s %8s %8s %8s %9s %9s %10s%n",
+          "model",
+          "theta",
+          "low",
+          "high",
+          "episodes",
+          "censored",
+          "incomplete");
+      for (ThetaFigure.Series one : series) {
+        out.printf(
+            Locale.ROOT,
+            "%-24s %8.3f %8.3f %8.3f %9d %9d %10d%n",
+            one.model(),
+            one.estimate().theta(),
+            one.estimate().low(),
+            one.estimate().high(),
+            one.observations().episodes(),
+            one.observations().censored(),
+            one.observations().incomplete());
+      }
+      out.println("wrote theta.json, observations.csv and theta.tex to " + output);
+      return 0;
     }
   }
 
