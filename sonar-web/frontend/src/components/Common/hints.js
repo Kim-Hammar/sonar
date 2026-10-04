@@ -22,6 +22,8 @@ const STOP_MEANINGS = {
   'time-expired': 'The per-scenario time limit passed.',
   cancelled: 'The agent execution was cancelled.',
   'search-exhausted': 'No candidate repair was left to try.',
+  abandoned:
+    'The search policy judged that verifying more candidates would cost more than the remaining violations.',
   failed: 'An error ended the scenario.'
 }
 

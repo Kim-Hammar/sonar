@@ -8,16 +8,20 @@ import java.util.Optional;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.ParallelismConfig;
 import se.kth.sonar.policy.GreedyPolicy;
+import se.kth.sonar.policy.KoopmanPolicy;
+import se.kth.sonar.policy.SearchPolicy;
 
 /**
  * Everything a user may choose about a run. Budgets apply to each scenario separately.
  *
  * @param specificationPercent the share of specifications to use, in per cent
- * @param verificationBatch the candidates the search verifies at a time
+ * @param verificationBatch the candidates the greedy policy verifies at a time, and the fewest the
+ *     Koopman-index policy does
  * @param parallelism how much of the pipeline may run at the same time
  * @param limits the per-scenario limit of each limited resource
  * @param timeLimit the per-scenario time limit, if any
  * @param seed the seed of every random choice
+ * @param koopman the parameters of the Koopman-index policy, or empty for the greedy policy
  */
 public record RunSettings(
     int specificationPercent,
@@ -25,7 +29,8 @@ public record RunSettings(
     ParallelismConfig parallelism,
     Map<Budget.Resource, Long> limits,
     Optional<Duration> timeLimit,
-    long seed) {
+    long seed,
+    Optional<KoopmanPolicy.Parameters> koopman) {
 
   /**
    * Checks the settings.
@@ -55,6 +60,32 @@ public record RunSettings(
     if (timeLimit.filter(limit -> limit.isNegative() || limit.isZero()).isPresent()) {
       throw new IllegalArgumentException("the time limit must be positive");
     }
+    Objects.requireNonNull(koopman, "koopman");
+  }
+
+  /** Creates settings for the greedy policy. */
+  public RunSettings(
+      int specificationPercent,
+      int verificationBatch,
+      ParallelismConfig parallelism,
+      Map<Budget.Resource, Long> limits,
+      Optional<Duration> timeLimit,
+      long seed) {
+    this(
+        specificationPercent,
+        verificationBatch,
+        parallelism,
+        limits,
+        timeLimit,
+        seed,
+        Optional.empty());
+  }
+
+  /** Returns the search policy these settings choose. */
+  public SearchPolicy policy() {
+    return koopman
+        .<SearchPolicy>map(parameters -> new KoopmanPolicy(parameters, verificationBatch))
+        .orElseGet(() -> new GreedyPolicy(verificationBatch));
   }
 
   /** Returns the settings used unless the user chooses others. */

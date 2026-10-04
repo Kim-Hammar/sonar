@@ -29,7 +29,6 @@ import se.kth.sonar.jev.CachingTransport;
 import se.kth.sonar.jev.HttpTransport;
 import se.kth.sonar.jev.JevDecisionModel;
 import se.kth.sonar.jev.JevRequestCodec;
-import se.kth.sonar.policy.GreedyPolicy;
 import se.kth.sonar.prior.AgreementOutlierFactor;
 import se.kth.sonar.prior.CounterexampleFactor;
 import se.kth.sonar.prior.DropFactor;
@@ -214,7 +213,7 @@ public final class Pipeline implements AutoCloseable {
         new DecisionProblemFactory(PAYLOAD_LIMIT),
         new DecisionService(models),
         new BeliefModel(),
-        new GreedyPolicy(settings.verificationBatch()),
+        settings.policy(),
         new Adoption(verifier, epochs.programs()));
   }
 }

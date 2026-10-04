@@ -60,6 +60,7 @@ export const STOP_LABELS = {
   'time-expired': 'Time limit reached',
   cancelled: 'Cancelled',
   'search-exhausted': 'Search exhausted',
+  abandoned: 'Abandoned',
   failed: 'Failed'
 }
 

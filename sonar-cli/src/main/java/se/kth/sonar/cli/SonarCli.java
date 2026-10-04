@@ -38,6 +38,7 @@ import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.Cancellation;
 import se.kth.sonar.execution.ParallelismConfig;
 import se.kth.sonar.jev.HttpTransport;
+import se.kth.sonar.policy.KoopmanPolicy;
 import se.kth.sonar.web.WebServer;
 
 /** The {@code sonar} command line. */
@@ -258,8 +259,44 @@ public final class SonarCli implements Runnable {
         names = "--verification-batch",
         defaultValue = "5",
         paramLabel = "N",
-        description = "Candidates verified at a time (default: ${DEFAULT-VALUE}).")
+        description =
+            "Candidates the greedy policy verifies at a time, and the fewest the koopman policy"
+                + " does (default: ${DEFAULT-VALUE}).")
     private int verificationBatch;
+
+    @Option(
+        names = "--policy",
+        defaultValue = "greedy",
+        paramLabel = "NAME",
+        description =
+            "Search policy: greedy verifies a fixed batch from the most probable region; koopman"
+                + " sizes the batch by Koopman's index and may stop early (default:"
+                + " ${DEFAULT-VALUE}).")
+    private Policy policy;
+
+    @Option(
+        names = "--theta",
+        defaultValue = "" + KoopmanPolicy.DEFAULT_THETA,
+        paramLabel = "θ",
+        description =
+            "Koopman policy: how well the decision model ranks candidates, θ in q(r, θ) = 1 -"
+                + " exp(-θ r) (default: ${DEFAULT-VALUE}).")
+    private double theta;
+
+    @Option(
+        names = "--lambda",
+        defaultValue = "" + KoopmanPolicy.DEFAULT_LAMBDA,
+        paramLabel = "λ",
+        description =
+            "Koopman policy: the cost of one violated specification left at the end, in"
+                + " verifications (default: ${DEFAULT-VALUE}).")
+    private double lambda;
+
+    /** The search policies a run can choose. */
+    enum Policy {
+      greedy,
+      koopman
+    }
 
     @Option(
         names = "--max-verifications",
@@ -344,7 +381,10 @@ public final class SonarCli implements Runnable {
                   scenarioParallelism),
               limits,
               Optional.ofNullable(timeLimit).map(Duration::ofSeconds),
-              seed);
+              seed,
+              policy == Policy.koopman
+                  ? Optional.of(new KoopmanPolicy.Parameters(theta, lambda))
+                  : Optional.empty());
       Workspace workspace = workspace(spec, dataset, output);
       HttpTransport.Settings model = decisions.settings();
       PrintWriter out = spec.commandLine().getOut();

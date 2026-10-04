@@ -319,6 +319,7 @@ final class TraceJson {
       case RepairResult.Stop.TimeExpired _ -> "time-expired";
       case RepairResult.Stop.Cancelled _ -> "cancelled";
       case RepairResult.Stop.SearchExhausted _ -> "search-exhausted";
+      case RepairResult.Stop.Abandoned _ -> "abandoned";
       case RepairResult.Stop.Failed _ -> "failed";
     };
   }

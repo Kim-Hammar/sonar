@@ -10,6 +10,7 @@ import java.util.TreeMap;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.ParallelismConfig;
 import se.kth.sonar.policy.GreedyPolicy;
+import se.kth.sonar.policy.KoopmanPolicy;
 
 /**
  * The contents of a run's {@code run.json}: what was asked for and where the run stands. Absent
@@ -70,6 +71,7 @@ public record RunDocument(
    * @param limits per-scenario limits keyed by lower-case resource name
    * @param timeLimitSeconds the per-scenario time limit in seconds, or null
    * @param seed the seed of every random choice
+   * @param koopman the Koopman-index policy's parameters, or null for the greedy policy
    */
   public record Settings(
       int specificationPercent,
@@ -80,7 +82,8 @@ public record RunDocument(
       int scenarioParallelism,
       Map<String, Long> limits,
       Long timeLimitSeconds,
-      long seed) {
+      long seed,
+      KoopmanPolicy.Parameters koopman) {
 
     /** Copies the limits. */
     public Settings {
@@ -104,7 +107,8 @@ public record RunDocument(
           parallelism.scenarioParallelism(),
           limits,
           settings.timeLimit().map(Duration::toSeconds).orElse(null),
-          settings.seed());
+          settings.seed(),
+          settings.koopman().orElse(null));
     }
 
     /**
@@ -124,7 +128,8 @@ public record RunDocument(
               verificationWorkers, decisionConcurrency, generationParallelism, scenarioParallelism),
           parsed,
           Optional.ofNullable(timeLimitSeconds).map(Duration::ofSeconds),
-          seed);
+          seed,
+          Optional.ofNullable(koopman));
     }
   }
 }

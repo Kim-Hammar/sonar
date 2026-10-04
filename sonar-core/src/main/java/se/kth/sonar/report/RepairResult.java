@@ -62,6 +62,9 @@ public record RepairResult(
     /** No candidate is left to try. */
     record SearchExhausted() implements Stop {}
 
+    /** The policy judged that further search would cost more than the repair is worth. */
+    record Abandoned() implements Stop {}
+
     /**
      * The run failed.
      *
