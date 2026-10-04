@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import se.kth.sonar.execution.Cancellation;
 import se.kth.sonar.execution.ParallelismConfig;
+import se.kth.sonar.policy.GreedyPolicy;
 import se.kth.sonar.trace.TraceRecord;
 
 class DeterminismTest {
@@ -28,7 +29,8 @@ class DeterminismTest {
     RunSettings settings =
         new RunSettings(
             10,
-            new ParallelismConfig(1, 1, 1, scenarioParallelism, 0),
+            GreedyPolicy.DEFAULT_BATCH,
+            new ParallelismConfig(1, 1, 1, scenarioParallelism),
             Map.of(),
             Optional.empty(),
             11);

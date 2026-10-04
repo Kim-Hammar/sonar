@@ -18,7 +18,7 @@ import se.kth.sonar.web.http.Router;
 import se.kth.sonar.web.runs.RunManager;
 
 /**
- * Routes that start, list, cancel and follow runs.
+ * Routes that start, list, cancel, delete and follow runs.
  *
  * <p>History comes in pages from {@code /events}. New events stream from {@code /stream} as
  * Server-Sent Events: each message carries a batch of summaries with the last sequence number as
@@ -72,6 +72,18 @@ public final class RunRoutes {
           } catch (IllegalStateException e) {
             throw HttpError.conflict(e.getMessage());
           }
+        });
+    router.delete(
+        "/api/runs/{id}",
+        call -> {
+          try {
+            if (!runs.delete(id(call))) {
+              throw missing(call);
+            }
+          } catch (IllegalStateException e) {
+            throw HttpError.conflict(e.getMessage());
+          }
+          call.noContent();
         });
     router.get(
         "/api/runs/{id}/events",

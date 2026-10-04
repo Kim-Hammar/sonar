@@ -108,6 +108,22 @@ public final class RunStore {
     return RunLog.open(directory.resolve(id));
   }
 
+  /** Deletes the stored run {@code id} with everything it recorded. */
+  public void delete(String id) throws IOException {
+    if (!validId(id)) {
+      throw new IllegalArgumentException("invalid run identifier '" + id + "'");
+    }
+    Path run = directory.resolve(id);
+    if (!Files.exists(run)) {
+      return;
+    }
+    try (Stream<Path> paths = Files.walk(run)) {
+      for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+        Files.delete(path);
+      }
+    }
+  }
+
   private Optional<RunDocument> readInterrupting(Path run) {
     try {
       RunDocument document = RunLog.readDocument(run);

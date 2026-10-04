@@ -212,9 +212,9 @@ public final class Pipeline implements AutoCloseable {
         epochs,
         verifier,
         new DecisionProblemFactory(PAYLOAD_LIMIT),
-        new DecisionService(models, context),
+        new DecisionService(models),
         new BeliefModel(),
-        new GreedyPolicy(),
+        new GreedyPolicy(settings.verificationBatch()),
         new Adoption(verifier, epochs.programs()));
   }
 }

@@ -233,7 +233,7 @@ class RepairEngineTest {
             new EpochBuilder(programs, spaces, prior),
             verifier,
             new DecisionProblemFactory(60_000),
-            new DecisionService(models, context),
+            new DecisionService(models),
             new BeliefModel(),
             new GreedyPolicy(),
             new Adoption(verifier, programs)));

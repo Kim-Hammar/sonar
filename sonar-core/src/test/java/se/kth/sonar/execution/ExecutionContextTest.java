@@ -15,7 +15,7 @@ class ExecutionContextTest {
   private static final ScopedValue<String> TAG = ScopedValue.newInstance();
 
   private static ParallelismConfig parallel() {
-    return new ParallelismConfig(2, 4, 4, 1, 1);
+    return new ParallelismConfig(2, 4, 4, 1);
   }
 
   private static void pause() {

@@ -44,7 +44,7 @@ class BenchmarkRunnerTest {
 
   private static ExecutionContext context(int scenarioParallelism) {
     return ExecutionContext.open(
-        new ParallelismConfig(1, 1, 1, scenarioParallelism, 0), List.of(RunScope.CURRENT));
+        new ParallelismConfig(1, 1, 1, scenarioParallelism), List.of(RunScope.CURRENT));
   }
 
   @Test

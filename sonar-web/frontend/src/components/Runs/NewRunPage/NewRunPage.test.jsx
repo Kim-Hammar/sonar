@@ -20,19 +20,19 @@ const INFO = {
   endpoint: 'https://example.invalid/decisions',
   defaults: {
     specificationPercent: 10,
+    verificationBatch: 5,
     verificationWorkers: 1,
     decisionConcurrency: 4,
     generationParallelism: 8,
     scenarioParallelism: 1,
-    prefetchDecisions: 0,
     seed: 0
   },
   limits: {
+    verificationBatch: 64,
     verificationWorkers: 16,
     decisionConcurrency: 64,
     generationParallelism: 256,
-    scenarioParallelism: 64,
-    prefetchDecisions: 16
+    scenarioParallelism: 64
   }
 }
 
@@ -43,12 +43,12 @@ const FORM = {
   budgets: { verifications: '25', decisions: '', input_tokens: '' },
   minutes: '1.5',
   seed: '7',
-  parallelism: {
+  advanced: {
+    verificationBatch: '3',
     verificationWorkers: '2',
     decisionConcurrency: '4',
     generationParallelism: '8',
-    scenarioParallelism: '1',
-    prefetchDecisions: '0'
+    scenarioParallelism: '1'
   }
 }
 
@@ -64,11 +64,11 @@ describe('NewRunPage', () => {
       scenarios: ['scenario-001', 'scenario-002'],
       settings: {
         specificationPercent: 20,
+        verificationBatch: 3,
         verificationWorkers: 2,
         decisionConcurrency: 4,
         generationParallelism: 8,
         scenarioParallelism: 1,
-        prefetchDecisions: 0,
         limits: { verifications: 25 },
         timeLimitSeconds: 90,
         seed: 7
@@ -79,13 +79,10 @@ describe('NewRunPage', () => {
   it('reports invalid values before anything is sent', () => {
     expect(validate({ ...FORM, scenarios: new Set() })).toMatch('at least one scenario')
     expect(
-      validate(
-        { ...FORM, parallelism: { ...FORM.parallelism, verificationWorkers: '99' } },
-        INFO.limits
-      )
+      validate({ ...FORM, advanced: { ...FORM.advanced, verificationWorkers: '99' } }, INFO.limits)
     ).toMatch('1 to 16')
     expect(validate({ ...FORM, budgets: { ...FORM.budgets, decisions: '-3' } })).toMatch(
-      'Decisions'
+      'Maximum decisions'
     )
     expect(validate(FORM, INFO.limits)).toBeNull()
   })
@@ -103,7 +100,7 @@ describe('NewRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Start agent execution' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Choose at least one scenario.')
     await user.click(await screen.findByRole('checkbox', { name: 'scenario-002' }))
-    await user.type(screen.getByLabelText('Verifications per scenario'), '30')
+    await user.type(screen.getByLabelText('Maximum verifications'), '30')
     expect(screen.queryByLabelText('Seed')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Start agent execution' }))
     await waitFor(() => expect(api.createRun).toHaveBeenCalledTimes(1))
@@ -111,6 +108,8 @@ describe('NewRunPage', () => {
     expect(body.scenarios).toEqual(['scenario-002'])
     expect(body.settings.limits).toEqual({ verifications: 30 })
     expect(body.settings.decisionConcurrency).toBe(4)
+    expect(body.settings.scenarioParallelism).toBe(1)
+    expect(body.settings.verificationBatch).toBe(5)
   })
 
   it('explains every field with an info icon', async () => {
@@ -123,19 +122,19 @@ describe('NewRunPage', () => {
       </InfoContext.Provider>
     )
     await user.click(screen.getByRole('button', { name: 'Advanced' }))
+    expect(screen.queryByLabelText('Scenarios at a time')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Decision requests in flight')).not.toBeInTheDocument()
     const fields = [
       'Name',
       'Scenarios',
       'Specifications',
-      'Verifications per scenario',
-      'Decisions per scenario',
-      'Input tokens per scenario',
-      'Minutes per scenario',
+      'Maximum verifications',
+      'Maximum decisions',
+      'Maximum input tokens',
+      'Maximum minutes',
       'Verification workers',
-      'Decision requests in flight',
       'Generation threads',
-      'Scenarios at a time',
-      'Decisions prefetched',
+      'Verification batch size',
       'Seed',
       'Decision model'
     ]

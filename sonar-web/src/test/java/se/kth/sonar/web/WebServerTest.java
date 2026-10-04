@@ -39,7 +39,7 @@ class WebServerTest {
   private static final String RUN =
       "{\"name\":\"t\",\"scenarios\":[\"scenario-001\",\"scenario-002\"],\"settings\":"
           + "{\"specificationPercent\":10,\"verificationWorkers\":1,\"decisionConcurrency\":1,\"generationParallelism\":1,"
-          + "\"scenarioParallelism\":2,\"prefetchDecisions\":0,\"limits\":{\"verifications\":8},\"seed\":5}}";
+          + "\"scenarioParallelism\":2,\"limits\":{\"verifications\":8},\"seed\":5}}";
 
   @TempDir Path dataset;
   @TempDir Path output;
@@ -95,6 +95,12 @@ class WebServerTest {
       request.header(headers[index], headers[index + 1]);
     }
     return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> delete(WebServer server, String path) throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(server.uri().resolve(path)).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private static JsonNode json(HttpResponse<String> response) throws IOException {
@@ -387,6 +393,41 @@ class WebServerTest {
     awaitStatus(server, first, "cancelled");
     assertThat(json(get(server, "api/runs")).path("runs").get(0).path("id").asText())
         .isEqualTo(second);
+  }
+
+  @Test
+  void anEndedRunCanBeDeletedButARunningOneMustBeCancelledFirst() throws Exception {
+    RunLauncher launcher =
+        (run, cancellation, sink) -> {
+          while (!cancellation.isCancelled()) {
+            try {
+              Thread.sleep(5);
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+              break;
+            }
+          }
+          return List.of();
+        };
+    WebServer server = start(launcher);
+    String id =
+        json(post(server, "api/runs", "application/json", RUN)).path("run").path("id").asText();
+    awaitStatus(server, id, "running");
+    assertThat(delete(server, "api/runs/" + id).statusCode()).isEqualTo(409);
+    post(server, "api/runs/" + id + "/cancel", "application/json", "{}");
+    awaitStatus(server, id, "cancelled");
+
+    assertThat(delete(server, "api/runs/" + id).statusCode()).isEqualTo(204);
+    assertThat(get(server, "api/runs/" + id).statusCode()).isEqualTo(404);
+    assertThat(json(get(server, "api/runs")).path("runs")).isEmpty();
+    assertThat(delete(server, "api/runs/" + id).statusCode()).isEqualTo(404);
+    server.close();
+    servers.remove(server);
+    WebServer restarted = WebServer.start(config(false));
+    servers.add(restarted);
+    assertThat(get(restarted, "api/runs/" + id).statusCode())
+        .as("the run's files are gone, not only its entry")
+        .isEqualTo(404);
   }
 
   @Test

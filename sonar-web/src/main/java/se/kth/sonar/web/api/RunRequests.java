@@ -13,11 +13,11 @@ final class RunRequests {
   static final Map<String, Integer> MAXIMA =
       Map.of(
           "scenarios", 1000,
+          "verificationBatch", 64,
           "verificationWorkers", 16,
           "decisionConcurrency", 64,
           "generationParallelism", 256,
-          "scenarioParallelism", 64,
-          "prefetchDecisions", 16);
+          "scenarioParallelism", 64);
 
   private RunRequests() {}
 
@@ -50,11 +50,13 @@ final class RunRequests {
       throw HttpError.badRequest("the execution settings are missing");
     }
     RunDocument.Settings settings = request.settings();
+    if (settings.verificationBatch() != null) {
+      within("verificationBatch", settings.verificationBatch());
+    }
     within("verificationWorkers", settings.verificationWorkers());
     within("decisionConcurrency", settings.decisionConcurrency());
     within("generationParallelism", settings.generationParallelism());
     within("scenarioParallelism", settings.scenarioParallelism());
-    within("prefetchDecisions", settings.prefetchDecisions());
     RunSettings parsed;
     try {
       parsed = settings.toRunSettings();

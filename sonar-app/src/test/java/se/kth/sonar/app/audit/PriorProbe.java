@@ -72,7 +72,7 @@ class PriorProbe {
     Dialect dialect = Dialect.load("cisco-ios");
     ScenarioRepository scenarios = new ScenarioRepository(DATASET);
     try (ExecutionContext context =
-            ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1, 0), List.of());
+            ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1), List.of());
         ResourcePool<DataPlaneEngine> engines =
             ResourcePool.of(
                 1,

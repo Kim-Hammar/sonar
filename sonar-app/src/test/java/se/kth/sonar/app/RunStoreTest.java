@@ -50,11 +50,32 @@ class RunStoreTest {
   @Test
   void settingsSurviveTheRoundTripThroughRunJson() throws IOException {
     RunStore store = new RunStore(directory, Clock.systemUTC());
-    RunSettings settings = RunSettings.defaults();
+    RunSettings defaults = RunSettings.defaults();
+    RunSettings settings =
+        new RunSettings(
+            defaults.specificationPercent(),
+            3,
+            defaults.parallelism(),
+            defaults.limits(),
+            defaults.timeLimit(),
+            defaults.seed());
     try (RunLog log = store.create("x", List.of("s1", "s2"), settings, false, "m")) {
       RunDocument read = RunLog.readDocument(log.directory());
       assertThat(read.settings().toRunSettings()).isEqualTo(settings);
       assertThat(read.scenarios()).containsExactly("s1", "s2");
+    }
+  }
+
+  @Test
+  void aRunStoredWithoutAVerificationBatchReadsWithTheDefault() throws IOException {
+    RunStore store = new RunStore(directory, Clock.systemUTC());
+    try (RunLog log = store.create("x", List.of("s"), RunSettings.defaults(), false, "m")) {
+      Path document = log.directory().resolve("run.json");
+      Files.writeString(
+          document, Files.readString(document).replaceAll("\"verificationBatch\":\\d+,", ""));
+      assertThat(Files.readString(document)).doesNotContain("verificationBatch");
+      assertThat(RunLog.readDocument(log.directory()).settings().toRunSettings())
+          .isEqualTo(RunSettings.defaults());
     }
   }
 

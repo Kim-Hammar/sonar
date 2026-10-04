@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.ParallelismConfig;
+import se.kth.sonar.policy.GreedyPolicy;
 
 /**
  * The contents of a run's {@code run.json}: what was asked for and where the run stands. Absent
@@ -61,22 +62,22 @@ public record RunDocument(
    * The run settings as stored.
    *
    * @param specificationPercent the share of specifications, in per cent
+   * @param verificationBatch the candidates verified at a time, or null for the default
    * @param verificationWorkers data-plane engines verifying at the same time
    * @param decisionConcurrency decision requests in flight at the same time
    * @param generationParallelism threads generating candidates
    * @param scenarioParallelism scenarios repaired at the same time
-   * @param prefetchDecisions decisions requested ahead of need
    * @param limits per-scenario limits keyed by lower-case resource name
    * @param timeLimitSeconds the per-scenario time limit in seconds, or null
    * @param seed the seed of every random choice
    */
   public record Settings(
       int specificationPercent,
+      Integer verificationBatch,
       int verificationWorkers,
       int decisionConcurrency,
       int generationParallelism,
       int scenarioParallelism,
-      int prefetchDecisions,
       Map<String, Long> limits,
       Long timeLimitSeconds,
       long seed) {
@@ -96,11 +97,11 @@ public record RunDocument(
       ParallelismConfig parallelism = settings.parallelism();
       return new Settings(
           settings.specificationPercent(),
+          settings.verificationBatch(),
           parallelism.verificationWorkers(),
           parallelism.decisionConcurrency(),
           parallelism.generationParallelism(),
           parallelism.scenarioParallelism(),
-          parallelism.prefetchDecisions(),
           limits,
           settings.timeLimit().map(Duration::toSeconds).orElse(null),
           settings.seed());
@@ -118,12 +119,9 @@ public record RunDocument(
               parsed.put(Budget.Resource.valueOf(resource.toUpperCase(Locale.ROOT)), limit));
       return new RunSettings(
           specificationPercent,
+          verificationBatch == null ? GreedyPolicy.DEFAULT_BATCH : verificationBatch,
           new ParallelismConfig(
-              verificationWorkers,
-              decisionConcurrency,
-              generationParallelism,
-              scenarioParallelism,
-              prefetchDecisions),
+              verificationWorkers, decisionConcurrency, generationParallelism, scenarioParallelism),
           parsed,
           Optional.ofNullable(timeLimitSeconds).map(Duration::ofSeconds),
           seed);

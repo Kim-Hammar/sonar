@@ -1,6 +1,6 @@
-import { Square } from 'lucide-react'
+import { Square, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import useRunEvents from '../../../hooks/useRunEvents'
 import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
@@ -10,6 +10,7 @@ import { EVENT_LABELS, formatDateTime, formatDuration } from '../../Common/forma
 import StatusBadge from '../../Common/StatusBadge/StatusBadge'
 import Tabs from '../../Common/Tabs/Tabs'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
+import { confirmDelete } from '../RunsPage/RunsPage'
 import ActivityList from '../../Run/ActivityList/ActivityList'
 import Inspector from '../../Run/Inspector/Inspector'
 import KpiStrip from '../../Run/KpiStrip/KpiStrip'
@@ -25,6 +26,7 @@ import './RunPage.css'
 export default function RunPage() {
   const { runId } = useParams()
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
   const [run, setRun] = useState(null)
   const [error, setError] = useState(null)
   const [now, setNow] = useState(() => Date.now())
@@ -70,6 +72,18 @@ export default function RunPage() {
     setParams(next)
   }
 
+  const remove = async () => {
+    if (!confirmDelete(run)) {
+      return
+    }
+    try {
+      await api.deleteRun(runId)
+      navigate('/executions')
+    } catch (failure) {
+      setError(failure.message)
+    }
+  }
+
   const cancel = async () => {
     try {
       const body = await api.cancelRun(runId)
@@ -108,10 +122,15 @@ export default function RunPage() {
           </>
         }
         actions={
-          active && (
+          active ? (
             <button type="button" className="button" onClick={cancel}>
               <Square size={14} />
               Cancel execution
+            </button>
+          ) : (
+            <button type="button" className="button danger" onClick={remove}>
+              <Trash2 size={14} />
+              Delete execution
             </button>
           )
         }

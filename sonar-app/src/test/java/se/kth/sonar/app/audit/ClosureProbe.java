@@ -49,7 +49,7 @@ class ClosureProbe {
     assumeTrue(!siteText.isEmpty(), "no site given");
     Dialect dialect = Dialect.load("cisco-ios");
     try (ExecutionContext context =
-        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1, 0), List.of())) {
+        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1), List.of())) {
       ProgramService programs =
           new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
       Bounds bounds = Bounds.defaults();

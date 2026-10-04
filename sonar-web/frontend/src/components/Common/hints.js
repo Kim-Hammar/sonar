@@ -54,20 +54,14 @@ export const HINTS = {
     minutes: {
       text: 'The most time one scenario may take. When it runs out, the scenario stops and keeps the repairs adopted so far. Leave empty for no limit.'
     },
+    verificationBatch: {
+      text: 'How many candidate repairs are verified at a time before the search decides what to adopt. A larger batch finds a repair in fewer steps but spends more verifications on candidates that turn out not to be needed. Unlike the other advanced settings, it changes what the search does and what it finds.'
+    },
     verificationWorkers: {
       text: `How many candidate networks are verified at the same time; each needs memory of its own. ${DURATION_ONLY}`
     },
-    decisionConcurrency: {
-      text: `How many questions may be sent to the decision model at the same time. ${DURATION_ONLY}`
-    },
     generationParallelism: {
       text: `How many candidate repairs are generated at the same time, before any is verified. ${DURATION_ONLY}`
-    },
-    scenarioParallelism: {
-      text: `How many scenarios are repaired at the same time, each with its own budget. ${DURATION_ONLY}`
-    },
-    prefetchDecisions: {
-      text: 'How many questions may be sent to the decision model before they are needed, while candidates are verified, to hide its response time; 0 turns this off. Answers the search never uses still cost provider tokens but do not count against the budget.'
     },
     seed: {
       text: 'The seed of every random choice the search makes. Executions with the same seed, scenarios and settings make the same random choices.'

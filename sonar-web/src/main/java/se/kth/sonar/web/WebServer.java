@@ -170,6 +170,6 @@ public final class WebServer implements AutoCloseable {
   /** Candidate generation uses half the processors, leaving room for executions and Batfish. */
   private static ParallelismConfig explorationParallelism() {
     int generation = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
-    return new ParallelismConfig(1, 1, generation, 1, 0);
+    return new ParallelismConfig(1, 1, generation, 1);
   }
 }

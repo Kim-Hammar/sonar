@@ -90,6 +90,7 @@ export const api = {
   run: (id) => request(`/api/runs/${name(id)}`),
   createRun: (body) => request('/api/runs', { method: 'POST', body }),
   cancelRun: (id) => request(`/api/runs/${name(id)}/cancel`, { method: 'POST', body: {} }),
+  deleteRun: (id) => request(`/api/runs/${name(id)}`, { method: 'DELETE' }),
   events: (id, after, limit) =>
     request(`/api/runs/${name(id)}/events?after=${after}&limit=${limit}`),
   event: (id, seq) => request(`/api/runs/${name(id)}/events/${seq}`),

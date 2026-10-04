@@ -182,24 +182,34 @@ public final class SonarCli implements Runnable {
     private int percent;
 
     @Option(
+        names = "--verification-batch",
+        defaultValue = "5",
+        paramLabel = "N",
+        description = "Candidates verified at a time (default: ${DEFAULT-VALUE}).")
+    private int verificationBatch;
+
+    @Option(
         names = "--max-verifications",
         paramLabel = "N",
-        description = "Verifications per scenario.")
+        description = "Maximum verifications for each scenario.")
     private Long maxVerifications;
 
-    @Option(names = "--max-decisions", paramLabel = "N", description = "Decisions per scenario.")
+    @Option(
+        names = "--max-decisions",
+        paramLabel = "N",
+        description = "Maximum decisions for each scenario.")
     private Long maxDecisions;
 
     @Option(
         names = "--max-input-tokens",
         paramLabel = "N",
-        description = "Input tokens per scenario.")
+        description = "Maximum input tokens for each scenario.")
     private Long maxInputTokens;
 
     @Option(
         names = "--time-limit",
         paramLabel = "SECONDS",
-        description = "Time limit per scenario.")
+        description = "Maximum seconds for each scenario.")
     private Long timeLimit;
 
     @Option(
@@ -236,13 +246,6 @@ public final class SonarCli implements Runnable {
         description = "Scenarios repaired at the same time (default: ${DEFAULT-VALUE}).")
     private int scenarioParallelism;
 
-    @Option(
-        names = "--prefetch-decisions",
-        defaultValue = "0",
-        paramLabel = "N",
-        description = "Decisions requested ahead of need (default: ${DEFAULT-VALUE}).")
-    private int prefetchDecisions;
-
     @CommandLine.ArgGroup(exclusive = false)
     private DecisionOptions decisions = new DecisionOptions();
 
@@ -260,12 +263,12 @@ public final class SonarCli implements Runnable {
       RunSettings settings =
           new RunSettings(
               percent,
+              verificationBatch,
               new ParallelismConfig(
                   verificationWorkers,
                   decisionConcurrency,
                   generationParallelism,
-                  scenarioParallelism,
-                  prefetchDecisions),
+                  scenarioParallelism),
               limits,
               Optional.ofNullable(timeLimit).map(Duration::ofSeconds),
               seed);

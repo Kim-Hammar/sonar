@@ -39,7 +39,7 @@ class RepairedViolationsDump {
     Map<String, Integer> byScenario = new TreeMap<>();
     Map<String, String> example = new TreeMap<>();
     try (ExecutionContext context =
-        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1, 0), List.of())) {
+        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1), List.of())) {
       ProgramService service = new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
       for (String name : scenarios.scenarios()) {
         Path truth = TRUTH.resolve(name).resolve("initial_configs/configs");

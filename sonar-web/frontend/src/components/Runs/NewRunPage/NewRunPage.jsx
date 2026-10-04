@@ -12,18 +12,23 @@ import PageHeader from '../../Layout/PageHeader/PageHeader'
 import ScenarioPicker from '../ScenarioPicker/ScenarioPicker'
 import './NewRunPage.css'
 
-const PARALLELISM = [
+/** The whole-number settings under Advanced, each with its label. */
+const ADVANCED = [
+  ['verificationBatch', 'Verification batch size'],
   ['verificationWorkers', 'Verification workers'],
-  ['decisionConcurrency', 'Decision requests in flight'],
-  ['generationParallelism', 'Generation threads'],
-  ['scenarioParallelism', 'Scenarios at a time'],
-  ['prefetchDecisions', 'Decisions prefetched']
+  ['generationParallelism', 'Generation threads']
 ]
 
+/**
+ * Settings that only matter when several scenarios are repaired at the same time, which the web
+ * interface never does; a run takes the server's defaults for them.
+ */
+const SERVER_DEFAULTS = ['decisionConcurrency', 'scenarioParallelism']
+
 const BUDGETS = [
-  ['verifications', 'Verifications'],
-  ['decisions', 'Decisions'],
-  ['input_tokens', 'Input tokens']
+  ['verifications', 'Maximum verifications'],
+  ['decisions', 'Maximum decisions'],
+  ['input_tokens', 'Maximum input tokens']
 ]
 
 /** Builds the request body of a new agent execution from the form values. */
@@ -39,7 +44,9 @@ export function runRequest(form) {
     scenarios: [...form.scenarios].sort(),
     settings: {
       specificationPercent: Number(form.percent),
-      ...Object.fromEntries(PARALLELISM.map(([key]) => [key, Number(form.parallelism[key])])),
+      ...Object.fromEntries(
+        Object.entries(form.advanced).map(([key, value]) => [key, Number(value)])
+      ),
       limits,
       timeLimitSeconds: form.minutes === '' ? null : Math.round(Number(form.minutes) * 60),
       seed: Number(form.seed)
@@ -52,11 +59,10 @@ export function validate(form, limits = {}) {
   if (form.scenarios.size === 0) {
     return 'Choose at least one scenario.'
   }
-  for (const [key, label] of PARALLELISM) {
-    const value = Number(form.parallelism[key])
-    const minimum = key === 'prefetchDecisions' ? 0 : 1
-    if (!Number.isInteger(value) || value < minimum || (limits[key] && value > limits[key])) {
-      return `${label} must be a whole number from ${minimum}${limits[key] ? ` to ${limits[key]}` : ''}.`
+  for (const [key, label] of ADVANCED) {
+    const value = Number(form.advanced[key])
+    if (!Number.isInteger(value) || value < 1 || (limits[key] && value > limits[key])) {
+      return `${label} must be a whole number from 1${limits[key] ? ` to ${limits[key]}` : ''}.`
     }
   }
   for (const [key, label] of BUDGETS) {
@@ -79,7 +85,9 @@ function initialForm(defaults) {
     budgets: { verifications: '', decisions: '', input_tokens: '' },
     minutes: '',
     seed: defaults.seed,
-    parallelism: Object.fromEntries(PARALLELISM.map(([key]) => [key, defaults[key]]))
+    advanced: Object.fromEntries(
+      [...ADVANCED.map(([key]) => key), ...SERVER_DEFAULTS].map((key) => [key, defaults[key]])
+    )
   }
 }
 
@@ -151,7 +159,7 @@ function RunForm({ info, scenarios, onError }) {
         {BUDGETS.map(([key, label]) => (
           <div className="field" key={key}>
             <FieldLabel htmlFor={`budget-${key}`} hint={HINTS.settings[key]}>
-              {`${label} per scenario`}
+              {label}
             </FieldLabel>
             <input
               id={`budget-${key}`}
@@ -167,7 +175,7 @@ function RunForm({ info, scenarios, onError }) {
         ))}
         <div className="field">
           <FieldLabel htmlFor="budget-minutes" hint={HINTS.settings.minutes}>
-            Minutes per scenario
+            Maximum minutes
           </FieldLabel>
           <input
             id="budget-minutes"
@@ -179,20 +187,20 @@ function RunForm({ info, scenarios, onError }) {
           />
         </div>
       </div>
-      <Disclosure title="Advanced" meta="Parallelism, seed, decision model">
+      <Disclosure title="Advanced" meta="Batch size, parallelism, seed, decision model">
         <div className="NewRunPage-row">
-          {PARALLELISM.map(([key, label]) => (
+          {ADVANCED.map(([key, label]) => (
             <div className="field" key={key}>
-              <FieldLabel htmlFor={`parallelism-${key}`} hint={HINTS.settings[key]}>
+              <FieldLabel htmlFor={`advanced-${key}`} hint={HINTS.settings[key]}>
                 {label}
               </FieldLabel>
               <input
-                id={`parallelism-${key}`}
+                id={`advanced-${key}`}
                 className="input"
                 inputMode="numeric"
-                value={form.parallelism[key]}
+                value={form.advanced[key]}
                 onChange={(event) =>
-                  update({ parallelism: { ...form.parallelism, [key]: event.target.value } })
+                  update({ advanced: { ...form.advanced, [key]: event.target.value } })
                 }
               />
             </div>

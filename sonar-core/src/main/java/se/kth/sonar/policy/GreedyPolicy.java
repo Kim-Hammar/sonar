@@ -23,7 +23,9 @@ import se.kth.sonar.state.RepairState;
  * budget runs out, or no region is left.
  */
 public final class GreedyPolicy implements SearchPolicy {
-  private static final int DEFAULT_BATCH = 5;
+  /** The number of candidates verified per batch unless a run chooses another. */
+  public static final int DEFAULT_BATCH = 5;
+
   private static final int COMPARISON_REGIONS = 16;
 
   private final int batch;

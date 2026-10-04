@@ -7,11 +7,13 @@ import java.util.Objects;
 import java.util.Optional;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.ParallelismConfig;
+import se.kth.sonar.policy.GreedyPolicy;
 
 /**
  * Everything a user may choose about a run. Budgets apply to each scenario separately.
  *
  * @param specificationPercent the share of specifications to use, in per cent
+ * @param verificationBatch the candidates the search verifies at a time
  * @param parallelism how much of the pipeline may run at the same time
  * @param limits the per-scenario limit of each limited resource
  * @param timeLimit the per-scenario time limit, if any
@@ -19,6 +21,7 @@ import se.kth.sonar.execution.ParallelismConfig;
  */
 public record RunSettings(
     int specificationPercent,
+    int verificationBatch,
     ParallelismConfig parallelism,
     Map<Budget.Resource, Long> limits,
     Optional<Duration> timeLimit,
@@ -27,12 +30,15 @@ public record RunSettings(
   /**
    * Checks the settings.
    *
-   * @throws IllegalArgumentException if the percentage is outside 1 to 100, a limit is negative, or
-   *     the time limit is not positive
+   * @throws IllegalArgumentException if the percentage is outside 1 to 100, the batch is empty, a
+   *     limit is negative, or the time limit is not positive
    */
   public RunSettings {
     if (specificationPercent < 1 || specificationPercent > 100) {
       throw new IllegalArgumentException("the specification percentage must lie in [1, 100]");
+    }
+    if (verificationBatch < 1) {
+      throw new IllegalArgumentException("the verification batch must hold at least 1 candidate");
     }
     Objects.requireNonNull(parallelism, "parallelism");
     EnumMap<Budget.Resource, Long> copy = new EnumMap<>(Budget.Resource.class);
@@ -55,7 +61,8 @@ public record RunSettings(
   public static RunSettings defaults() {
     return new RunSettings(
         10,
-        new ParallelismConfig(1, 4, Runtime.getRuntime().availableProcessors(), 1, 0),
+        GreedyPolicy.DEFAULT_BATCH,
+        new ParallelismConfig(1, 4, Runtime.getRuntime().availableProcessors(), 1),
         Map.of(),
         Optional.empty(),
         0);

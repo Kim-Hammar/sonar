@@ -34,7 +34,6 @@ public final class InfoRoutes {
           info.put(
               "resources",
               Arrays.stream(Budget.Resource.values())
-                  .filter(resource -> !resource.name().startsWith("SPECULATIVE"))
                   .map(resource -> resource.name().toLowerCase(Locale.ROOT))
                   .toList());
           call.json(200, info);

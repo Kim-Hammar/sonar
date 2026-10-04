@@ -148,6 +148,33 @@ public final class RunManager implements AutoCloseable {
     }
   }
 
+  /**
+   * Deletes run {@code id} and everything it recorded, and returns whether it existed.
+   *
+   * @throws IllegalStateException if the run is queued or running; it must be cancelled first
+   */
+  public boolean delete(String id) throws IOException {
+    lock.lock();
+    try {
+      if (!documents.containsKey(id)) {
+        return false;
+      }
+      if (!current(id).runStatus().terminal()) {
+        throw new IllegalStateException("the execution has not ended; cancel it first");
+      }
+      RunLog log = logs.remove(id);
+      if (log != null) {
+        log.close();
+      }
+      documents.remove(id);
+      cancellations.remove(id);
+      store.delete(id);
+      return true;
+    } finally {
+      lock.unlock();
+    }
+  }
+
   /** Stops the worker, cancels the running run, and closes every log. */
   @Override
   public void close() {

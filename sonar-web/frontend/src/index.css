@@ -135,6 +135,14 @@ pre {
   background: var(--neutral-soft);
 }
 
+.button.danger {
+  color: var(--bad);
+}
+
+.button.danger:hover {
+  background: var(--bad-soft);
+}
+
 .card {
   border: 1px solid var(--border);
   border-radius: var(--radius);

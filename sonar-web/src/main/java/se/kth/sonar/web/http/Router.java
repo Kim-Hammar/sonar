@@ -41,6 +41,11 @@ public final class Router {
     return add("POST", template, handler);
   }
 
+  /** Adds a DELETE route. */
+  public Router delete(String template, Handler handler) {
+    return add("DELETE", template, handler);
+  }
+
   private Router add(String method, String template, Handler handler) {
     routes.add(new Route(method, segments(template), handler));
     return this;

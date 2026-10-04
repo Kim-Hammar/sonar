@@ -100,7 +100,7 @@ class SearchExplorerTest {
                   epochs,
                   verifier,
                   new DecisionProblemFactory(60_000),
-                  new DecisionService(models, context),
+                  new DecisionService(models),
                   new BeliefModel(),
                   (state, space, belief, budget) ->
                       new SearchPolicy.Action.Stop(new RepairResult.Stop.SearchExhausted()),

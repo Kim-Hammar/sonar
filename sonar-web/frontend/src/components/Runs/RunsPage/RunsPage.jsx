@@ -1,15 +1,22 @@
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import Alert from '../../Common/Alert/Alert'
 import { api } from '../../Common/api'
-import { RUNS_REFRESH } from '../../Common/constants'
+import { FINAL_STATUSES, RUNS_REFRESH } from '../../Common/constants'
 import DataTable from '../../Common/DataTable/DataTable'
 import Empty from '../../Common/Empty/Empty'
 import { formatDateTime, formatDuration } from '../../Common/format'
 import { HINTS } from '../../Common/hints'
 import StatusBadge from '../../Common/StatusBadge/StatusBadge'
 import PageHeader from '../../Layout/PageHeader/PageHeader'
+
+/** Asks the user to confirm deleting {@code run}, which cannot be undone. */
+export function confirmDelete(run) {
+  return window.confirm(
+    `Delete the agent execution "${run.name}" and everything it recorded? This cannot be undone.`
+  )
+}
 
 function duration(run, now) {
   if (!run.started) {
@@ -24,6 +31,19 @@ export default function RunsPage() {
   const [error, setError] = useState(null)
   const [now, setNow] = useState(() => Date.now())
   const navigate = useNavigate()
+
+  const remove = async (run) => {
+    if (!confirmDelete(run)) {
+      return
+    }
+    try {
+      await api.deleteRun(run.id)
+      setRuns((current) => current.filter((other) => other.id !== run.id))
+      setError(null)
+    } catch (failure) {
+      setError(failure.message)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -83,6 +103,26 @@ export default function RunsPage() {
       hint: HINTS.executions.duration,
       align: 'right',
       cell: (run) => duration(run, now)
+    },
+    {
+      id: 'actions',
+      header: '',
+      align: 'right',
+      cell: (run) =>
+        FINAL_STATUSES.has(run.status) && (
+          <button
+            type="button"
+            className="button quiet danger"
+            aria-label={`Delete ${run.name}`}
+            title="Delete this execution"
+            onClick={(event) => {
+              event.stopPropagation()
+              remove(run)
+            }}
+          >
+            <Trash2 size={14} />
+          </button>
+        )
     }
   ]
 

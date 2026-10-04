@@ -32,7 +32,7 @@ class ModelTiming {
     Dialect dialect = Dialect.load("cisco-ios");
     RepairProblem problem = new ScenarioRepository(dataset).load("scenario-001", 10);
     try (ExecutionContext context =
-        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1, 0), List.of())) {
+        ExecutionContext.open(new ParallelismConfig(1, 1, 8, 1), List.of())) {
       ProgramService programs =
           new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
       long start = System.nanoTime();

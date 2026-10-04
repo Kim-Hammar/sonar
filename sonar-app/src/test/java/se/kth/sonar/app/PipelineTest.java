@@ -16,6 +16,7 @@ import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.Cancellation;
 import se.kth.sonar.execution.ParallelismConfig;
 import se.kth.sonar.jev.HttpTransport;
+import se.kth.sonar.policy.GreedyPolicy;
 import se.kth.sonar.report.RepairResult;
 import se.kth.sonar.trace.TraceEvent;
 import se.kth.sonar.trace.TraceRecord;
@@ -25,7 +26,13 @@ class PipelineTest {
   @TempDir Path output;
 
   private static RunSettings settings(Map<Budget.Resource, Long> limits) {
-    return new RunSettings(10, ParallelismConfig.sequential(), limits, Optional.empty(), 3);
+    return new RunSettings(
+        10,
+        GreedyPolicy.DEFAULT_BATCH,
+        ParallelismConfig.sequential(),
+        limits,
+        Optional.empty(),
+        3);
   }
 
   @Test

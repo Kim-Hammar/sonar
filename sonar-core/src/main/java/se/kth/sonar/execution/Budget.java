@@ -15,8 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Limits on what a repair run may consume. Every method is safe to call from several threads.
  *
  * <p>The logical resources are charged by the orchestrating thread when it merges results, so a
- * parallel run consumes exactly what the sequential run would. Work done ahead of need is charged
- * to the speculative resources instead.
+ * parallel run consumes exactly what the sequential run would.
  */
 public final class Budget {
   /** A countable resource. */
@@ -25,9 +24,7 @@ public final class Budget {
     DECISIONS,
     PROVIDER_CALLS,
     INPUT_TOKENS,
-    OUTPUT_TOKENS,
-    SPECULATIVE_VERIFICATIONS,
-    SPECULATIVE_DECISIONS
+    OUTPUT_TOKENS
   }
 
   private final Map<Resource, Long> limits;
