@@ -10,11 +10,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import se.kth.sonar.network.Prefix;
 import se.kth.sonar.network.Topology;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
+import se.kth.sonar.relation.ObjectType;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
 import se.kth.sonar.text.RouterId;
@@ -22,9 +24,9 @@ import se.kth.sonar.verify.DataPlaneEvidence;
 
 /**
  * Which routers the verifier's evidence implicates for each specification: the source, the
- * waypoint, every hop of the traced flows, the boundary of a no-route component, and the routers
- * that originate the destination prefix through an interface, a network statement or a static
- * route.
+ * waypoint, every hop of the traced flows, the physical and BGP-session boundaries of a no-route
+ * component, and the routers that originate the destination prefix through an interface, a network
+ * statement or a static route.
  */
 public final class RouterEvidence {
   private final RepairState state;
@@ -69,6 +71,22 @@ public final class RouterEvidence {
     return sessions;
   }
 
+  /**
+   * Returns every pair of routers that peer in BGP, whichever of the two configures the session.
+   */
+  public static Set<Link> sessions(ProgramModel program) {
+    Set<Link> sessions = new HashSet<>();
+    for (ProgramObject router : program.objects("router")) {
+      RouterId local = router.ref().router();
+      for (RouterId peer : BgpPeering.peers(program, local)) {
+        if (!peer.equals(local)) {
+          sessions.add(Link.of(local, peer));
+        }
+      }
+    }
+    return Set.copyOf(sessions);
+  }
+
   /** An unordered physical router relation. */
   public record Link(RouterId first, RouterId second) implements Comparable<Link> {
     /** Returns the link in canonical router order. */
@@ -92,6 +110,104 @@ public final class RouterEvidence {
     knowing.addAll(
         state.verification().evidence().forwarders().getOrDefault(destination, Set.of()));
     return routeFrontier(state.problem().topology(), source, knowing);
+  }
+
+  /**
+   * Returns the BGP sessions at which the route to {@code destination} stops before {@code source}:
+   * those between the source, which holds no BGP route to the destination, and a peer that holds
+   * one. A session counts whichever of its two routers configures it. It is the boundary of the
+   * no-route component in the session graph, as {@link #routeFrontier(RouterId, Prefix)} is in the
+   * physical one.
+   *
+   * <p>A session is that boundary only when it is established and the failure is its own. A session
+   * that is not established is a violated relation of its own, with its own evidence. It must be
+   * the source's only session to a holder: a source that lacks a route several of its peers hold
+   * takes it from none of them, and the cause is the source's own configuration. And on most of the
+   * holder's sessions of the same kind, the same peer group or, without one, the same internal or
+   * external peering, the peer holds the route. A holder whose peers of that kind mostly lack it
+   * fails the kind, and the cause is the configuration the sessions share, which the frontier does
+   * not single out. A holder that configures no session toward the source is missing that session.
+   */
+  public Set<Link> sessionFrontier(RouterId source, Prefix destination) {
+    Set<RouterId> holders =
+        state.verification().evidence().routeHolders().getOrDefault(destination, Set.of());
+    Set<RouterId> candidates = new LinkedHashSet<>();
+    if (holders.contains(source)) {
+      return Set.of();
+    }
+    for (RouterId peer : BgpPeering.peers(state.program(), source)) {
+      if (holders.contains(peer)) {
+        candidates.add(peer);
+      }
+    }
+    for (RouterId holder : holders) {
+      if (BgpPeering.peers(state.program(), holder).contains(source)) {
+        candidates.add(holder);
+      }
+    }
+    if (candidates.size() != 1) {
+      return Set.of();
+    }
+    Set<Link> frontier = new LinkedHashSet<>();
+    for (RouterId holder : candidates) {
+      if (established(source, holder) && failsOnlyToward(holder, source, holders)) {
+        frontier.add(Link.of(source, holder));
+      }
+    }
+    return Set.copyOf(frontier);
+  }
+
+  /** Returns whether a satisfied BGP session relation joins the two routers. */
+  private boolean established(RouterId first, RouterId second) {
+    Set<RouterId> pair = Set.of(first, second);
+    return state.program().instances("bgp-session").stream()
+        .anyMatch(session -> session.satisfied() && session.routers().equals(pair));
+  }
+
+  /**
+   * Returns whether most peers of {@code holder} of the kind it peers with {@code source} by hold
+   * the route, or the holder configures no session toward the source at all.
+   */
+  private boolean failsOnlyToward(RouterId holder, RouterId source, Set<RouterId> holders) {
+    ProgramModel program = state.program();
+    Set<String> kinds = new HashSet<>();
+    for (ProgramObject session : BgpPeering.sessions(program, holder, source)) {
+      kinds.add(kind(program, holder, session));
+    }
+    if (kinds.isEmpty()) {
+      return true;
+    }
+    Set<RouterId> delivered = new HashSet<>();
+    Set<RouterId> failed = new HashSet<>();
+    for (ProgramObject session : program.objectsOf(holder)) {
+      if (!session.ref().type().equals("bgp-neighbor")
+          || !kinds.contains(kind(program, holder, session))) {
+        continue;
+      }
+      RouterId peer = peerRouter(session);
+      if (peer != null) {
+        (holders.contains(peer) ? delivered : failed).add(peer);
+      }
+    }
+    return delivered.size() > failed.size();
+  }
+
+  /** Returns the kind of a BGP neighbor object: its peer group, or else internal or external. */
+  private static String kind(ProgramModel program, RouterId local, ProgramObject session) {
+    Optional<String> group = session.value("peer-group");
+    if (group.isPresent()) {
+      return "group " + group.get();
+    }
+    RouterId peer = peerRouter(session);
+    return peer != null && BgpPeering.external(program, local, peer) ? "external" : "internal";
+  }
+
+  private static RouterId peerRouter(ProgramObject session) {
+    return session
+        .value("peer-router")
+        .filter(value -> ProgramObject.Ref.isReference(value, ObjectType.ROUTER))
+        .map(value -> ProgramObject.Ref.parse(value).router())
+        .orElse(null);
   }
 
   /**
@@ -213,6 +329,10 @@ public final class RouterEvidence {
     }
     if (frontierApplies(specification) && noRouteAtSource(evidence, predicate)) {
       for (Link link : routeFrontier(predicate.source(), predicate.destination())) {
+        routers.add(link.first());
+        routers.add(link.second());
+      }
+      for (Link link : sessionFrontier(predicate.source(), predicate.destination())) {
         routers.add(link.first());
         routers.add(link.second());
       }

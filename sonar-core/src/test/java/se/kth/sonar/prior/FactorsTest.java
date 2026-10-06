@@ -1312,6 +1312,101 @@ class FactorsTest {
   }
 
   @Test
+  void aSessionToAPeerHoldingTheRouteIsAFrontierWithoutAPhysicalLink() {
+    // r3 peers with r1, r2 and r4 in the same way; r2 and r4 hold the route and r1 does not
+    RepairState routeless = sessionState(Set.of(R2, R3, R4), 3);
+    Prefix destination = SESSION_DESTINATION;
+    Specification missing = routeless.verification().verdict().unresolved().getFirst();
+    Region session =
+        new SiteRegion(
+            new Region.Id("session"),
+            new ProgramObject.Ref("bgp-neighbor", R3, List.of("10.0.0.1")),
+            List.of(missing),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+    Region beyond =
+        new SiteRegion(
+            new Region.Id("beyond"),
+            new ProgramObject.Ref("interface", R2, List.of("GigabitEthernet0/1")),
+            List.of(missing),
+            Map.of(),
+            new Region.Hypotheses.Deferred(1));
+
+    assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, destination))
+        .containsExactly(RouterEvidence.Link.of(R1, R3));
+    assertThat(RouterEvidence.of(routeless).routers(missing)).contains(R3);
+    // One frontier session among the three: reduction 3, odds 3
+    assertThat(new FrontierFactor().weight(session, routeless)).isCloseTo(9, within(1e-12));
+    assertThat(new FrontierFactor().weight(beyond, routeless)).isEqualTo(1);
+  }
+
+  @Test
+  void aHolderThatFailsEverySessionOfAKindIsNoSessionFrontier() {
+    // r3 holds the route but passes it to none of its peers: the cause is what they share
+    RepairState routeless = sessionState(Set.of(R3), 3);
+
+    assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, SESSION_DESTINATION)).isEmpty();
+  }
+
+  @Test
+  void aSourceThatTakesTheRouteFromNoneOfSeveralHoldersIsNoSessionFrontier() {
+    // r1 peers with r3 and r4, which both hold the route: the cause is on r1
+    RepairState routeless = sessionState(Set.of(R2, R3, R4), 1);
+
+    assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, SESSION_DESTINATION)).isEmpty();
+  }
+
+  private static final Prefix SESSION_DESTINATION = Prefix.parse("10.9.9.0/24");
+
+  /**
+   * Returns r1 without a route to {@link #SESSION_DESTINATION}, peering with r3 across r2; r3 also
+   * peers with r2 and r4, r4 peers with {@code r4Peer}, and {@code holders} hold the route.
+   */
+  private static RepairState sessionState(Set<RouterId> holders, int r4Peer) {
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg", config(1, 3, 65001),
+                R2 + ".cfg", config(2, 3, 65001),
+                R3 + ".cfg",
+                    config(3, 1, 65001)
+                        + " neighbor 10.0.0.2 remote-as 65001\n neighbor 10.0.0.4 remote-as 65001\n",
+                R4 + ".cfg", config(4, r4Peer, 65001)));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R1, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R2, "GigabitEthernet0/0")),
+                new Topology.Link(
+                    new Topology.Endpoint(R2, "GigabitEthernet0/1"),
+                    new Topology.Endpoint(R3, "GigabitEthernet0/0"))));
+    Specification missing =
+        new Specification(
+            new ForwardingPredicate.Reachability(R1, SESSION_DESTINATION),
+            Specification.Status.parse("broken_removed"));
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                missing.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R1), DataPlaneEvidence.Disposition.NO_ROUTE))),
+            Map.of(SESSION_DESTINATION, holders),
+            Map.of(SESSION_DESTINATION, Set.of(R2, R3)));
+    return RepairState.initial(
+        new RepairProblem(
+            "reflected-without-next-hop",
+            snapshot,
+            topology,
+            SpecificationSet.of(List.of(missing))),
+        new Verification(
+            snapshot.id(), new Verdict(List.of(missing), List.of(), List.of()), evidence),
+        programs.model(snapshot, topology));
+  }
+
+  @Test
   void noRouteCounterexamplesWeighTheExactBoundarySession() {
     Region boundarySession =
         new SiteRegion(
@@ -1694,6 +1789,63 @@ class FactorsTest {
             new Region.Hypotheses.Deferred(2));
 
     assertThat(new CounterexampleFactor().weight(exact, missing)).isGreaterThan(3);
+  }
+
+  @Test
+  void aForbiddenOriginWeighsAHostIdentityWithoutMissingRoutes() {
+    Prefix destination = Prefix.parse("10.0.0.1/32");
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                R1 + ".cfg", config(1, 3, 65001),
+                R2 + ".cfg", config(1, 3, 65001).replace("hostname r1", "hostname r2"),
+                R3 + ".cfg", config(3, 1, 65001)));
+    Topology topology =
+        Topology.of(
+            snapshot.routers(),
+            List.of(
+                new Topology.Link(
+                    new Topology.Endpoint(R3, "GigabitEthernet0/0"),
+                    new Topology.Endpoint(R1, "GigabitEthernet0/1"))));
+    var program = programs.model(snapshot, topology);
+    Specification forbidden =
+        new Specification(
+            new ForwardingPredicate.Reachability(R3, destination),
+            Specification.Status.parse("broken_added"));
+    DataPlaneEvidence evidence =
+        new DataPlaneEvidence(
+            Map.of(
+                forbidden.predicate(),
+                List.of(
+                    new DataPlaneEvidence.Trace(
+                        List.of(R3, R1), DataPlaneEvidence.Disposition.ACCEPTED))),
+            Map.of(),
+            Map.of());
+    RepairProblem problem =
+        new RepairProblem(
+            "forbidden-host-identity", snapshot, topology, SpecificationSet.of(List.of(forbidden)));
+    RepairState delivered =
+        RepairState.initial(
+            problem,
+            new Verification(
+                snapshot.id(), new Verdict(List.of(forbidden), List.of(), List.of()), evidence),
+            program);
+    RelationInstance collision =
+        program.instances("address-identity").stream()
+            .filter(instance -> instance.routers().contains(R2))
+            .filter(instance -> !instance.satisfied())
+            .findFirst()
+            .orElseThrow();
+    Region region =
+        new RelationRegion(
+            new Region.Id("colliding-forbidden-loopback"),
+            collision,
+            List.of(forbidden),
+            Map.of(),
+            new Region.Hypotheses.Deferred(2));
+
+    // No missing route, so there is no set of origins to reduce the interfaces to
+    assertThat(new CounterexampleFactor().weight(region, delivered)).isCloseTo(3, within(1e-12));
   }
 
   @Test

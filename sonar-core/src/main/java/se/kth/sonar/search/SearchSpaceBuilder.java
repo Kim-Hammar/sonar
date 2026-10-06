@@ -49,6 +49,7 @@ import se.kth.sonar.state.ProtocolTransfer;
 import se.kth.sonar.state.RepairState;
 import se.kth.sonar.state.RouterEvidence;
 import se.kth.sonar.text.RouterId;
+import se.kth.sonar.verify.DataPlaneEvidence;
 
 /**
  * Builds and maintains the search space of a repair run.
@@ -213,14 +214,15 @@ public final class SearchSpaceBuilder {
               RelationRegion.Goal.SUPPRESS,
               new Region.Hypotheses.Deferred(1)));
     }
-    Set<RouterId> waypointSources = new LinkedHashSet<>();
+    Set<RouterId> bgpRouteless = bgpRouteless(state);
+    Set<RouterId> incidenceProcesses = new LinkedHashSet<>(bgpRouteless);
     for (Specification specification : state.verification().verdict().unresolved()) {
       if (specification.predicate() instanceof ForwardingPredicate.Waypointing waypointing) {
-        waypointSources.add(waypointing.source());
+        incidenceProcesses.add(waypointing.source());
       }
     }
     List<BgpIncidenceSet> incidenceSets =
-        BgpIncidenceSet.infer(program, implicated.keySet(), waypointSources);
+        BgpIncidenceSet.infer(program, implicated.keySet(), incidenceProcesses);
     Set<RouterId> incidenceClients = new LinkedHashSet<>();
     for (BgpIncidenceSet incidence : incidenceSets) {
       incidence.clients().forEach(client -> incidenceClients.add(client.router()));
@@ -243,7 +245,7 @@ public final class SearchSpaceBuilder {
           new IncidenceRegion(
               id, incidence, targets, reads, new Region.Hypotheses.Deferred(bound)));
     }
-    Set<RouterId> requiredProcesses = new LinkedHashSet<>();
+    Set<RouterId> requiredProcesses = new LinkedHashSet<>(bgpRouteless);
     for (Specification specification : state.verification().verdict().unresolved()) {
       if (specification.predicate() instanceof ForwardingPredicate.Waypointing
           && RouterEvidence.noRouteAtSource(
@@ -484,6 +486,26 @@ public final class SearchSpaceBuilder {
       result.addAll(InterdomainTransferClosure.close(state.program(), neighbor, policies));
     }
     return List.copyOf(result);
+  }
+
+  /**
+   * Returns the sources of violated obligations that require a delivery the source has no route
+   * for, although other routers hold a BGP route to the destination. Such a source needs a BGP
+   * incidence to learn the route as much as the source of a violated waypoint obligation does, so a
+   * router among them may lack its BGP process.
+   */
+  private static Set<RouterId> bgpRouteless(RepairState state) {
+    DataPlaneEvidence evidence = state.verification().evidence();
+    Set<RouterId> sources = new LinkedHashSet<>();
+    for (Specification specification : state.verification().verdict().unresolved()) {
+      ForwardingPredicate predicate = specification.predicate();
+      if (specification.requiresDelivery()
+          && RouterEvidence.noRouteAtSource(evidence, predicate)
+          && !evidence.routeHolders().getOrDefault(predicate.destination(), Set.of()).isEmpty()) {
+        sources.add(predicate.source());
+      }
+    }
+    return sources;
   }
 
   /** Returns the physical-link profiles that repair an implicated interface. */

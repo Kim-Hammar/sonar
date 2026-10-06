@@ -34,7 +34,15 @@ import se.kth.sonar.verify.DataPlaneEvidence;
  * frontier's far end propagates from that link's own interfaces, so the slice holds them as well. A
  * region in the slice of a frontier reached by {@code n} observations weighs the Jeffreys odds
  * {@code (n + 1/2) / (1/2)}, multiplied by the finite-space reduction from every physical link to
- * the distinct frontier links the verifier observed. Other regions weigh one.
+ * the distinct frontier links the verifier observed.
+ *
+ * <p>The same component ends in the BGP session graph at the sessions between a router without the
+ * route and a peer that holds it, whether or not the two are physically adjacent: a route reflected
+ * without a usable next hop stops there. The slice of such a session is its neighbor objects and
+ * the route maps that control them. A frontier session counts as one observation however many
+ * destinations stop at it, since it is one cause, and weighs those odds with the reduction from
+ * every BGP session to the distinct frontier sessions observed. A required isolation has no such
+ * boundary. Other regions weigh one.
  */
 public final class FrontierFactor implements PriorFactor {
   private static final int CACHE_CAPACITY = 64;
@@ -42,7 +50,12 @@ public final class FrontierFactor implements PriorFactor {
 
   private final ContentCache<Evidence> frontiers = new ContentCache<>(CACHE_CAPACITY);
 
-  private record Evidence(Map<ProgramObject.Ref, Integer> counts, int links) {}
+  private record Evidence(
+      Map<ProgramObject.Ref, Integer> counts,
+      int links,
+      Map<ProgramObject.Ref, Integer> sessionCounts,
+      int sessionLinks,
+      int sessions) {}
 
   @Override
   public String name() {
@@ -61,6 +74,12 @@ public final class FrontierFactor implements PriorFactor {
                 / Math.max(1, evidence.links());
         weight = Math.max(weight, reduction * (count + HALF) / HALF);
       }
+      Integer sessionCount = evidence.sessionCounts().get(object);
+      if (sessionCount != null) {
+        double reduction =
+            (double) Math.max(1, evidence.sessions()) / Math.max(1, evidence.sessionLinks());
+        weight = Math.max(weight, reduction * (sessionCount + HALF) / HALF);
+      }
     }
     return weight;
   }
@@ -72,6 +91,8 @@ public final class FrontierFactor implements PriorFactor {
     Set<List<Object>> observed = new HashSet<>();
     Set<RouterEvidence.Link> observedLinks = new HashSet<>();
     Map<ProgramObject.Ref, Integer> counts = new HashMap<>();
+    Set<RouterEvidence.Link> observedSessions = new HashSet<>();
+    Map<ProgramObject.Ref, Integer> sessionCounts = new HashMap<>();
     Set<ProgramObject.Ref> linkEnds = new HashSet<>();
     for (Topology.Link link : state.problem().topology().links()) {
       for (Topology.Endpoint endpoint : List.of(link.a(), link.b())) {
@@ -100,8 +121,24 @@ public final class FrontierFactor implements PriorFactor {
           counts.merge(object, 1, Integer::sum);
         }
       }
+      if (!RouterEvidence.frontierApplies(specification)) {
+        continue;
+      }
+      observedSessions.addAll(owners.sessionFrontier(predicate.source(), predicate.destination()));
     }
-    return new Evidence(Map.copyOf(counts), observedLinks.size());
+    // A session is one cause however many destinations stop at it, so it is observed once
+    for (RouterEvidence.Link link : observedSessions) {
+      for (ProgramObject.Ref object : CounterexampleFactor.boundarySites(state.program(), link)) {
+        sessionCounts.merge(object, 1, Integer::sum);
+      }
+    }
+    int sessions = observedSessions.isEmpty() ? 0 : RouterEvidence.sessions(state.program()).size();
+    return new Evidence(
+        Map.copyOf(counts),
+        observedLinks.size(),
+        Map.copyOf(sessionCounts),
+        observedSessions.size(),
+        sessions);
   }
 
   /** Returns the endpoint interfaces and the typed objects directly attached to them. */

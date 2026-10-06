@@ -132,8 +132,11 @@ public final class CounterexampleFactor implements PriorFactor {
         count = Math.max(count, evidence.forbiddenOrigins().getOrDefault(role, 0));
       }
       if (count > 0) {
+        // The reduction is from every interface to the origins of missing routes; a count that
+        // comes only from boundary or forbidden origins has no such origins to reduce to.
         double reduction =
             relation.instance().relation().equals("address-identity")
+                    && !evidence.noRouteOrigins().isEmpty()
                 ? (double) state.program().objects("interface").size()
                     / evidence.noRouteOrigins().size()
                 : 1;
@@ -456,9 +459,11 @@ public final class CounterexampleFactor implements PriorFactor {
     return Set.copyOf(sites);
   }
 
-  /** Returns BGP neighbors whose peer address joins the two ends of an observed boundary. */
-  private static Set<ProgramObject.Ref> boundarySites(
-      ProgramModel program, RouterEvidence.Link boundary) {
+  /**
+   * Returns BGP neighbors whose peer address joins the two ends of an observed boundary, with the
+   * route-map objects that control them.
+   */
+  static Set<ProgramObject.Ref> boundarySites(ProgramModel program, RouterEvidence.Link boundary) {
     Map<String, RouterId> addresses = new HashMap<>();
     for (ProgramObject object : program.objects("interface")) {
       object.value("address").ifPresent(address -> addresses.put(address, object.ref().router()));
