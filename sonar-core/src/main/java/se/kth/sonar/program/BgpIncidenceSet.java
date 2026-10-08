@@ -181,6 +181,39 @@ public record BgpIncidenceSet(
     return List.copyOf(result);
   }
 
+  /**
+   * Returns the incidence between {@code first} and {@code second} when one is a reflector with an
+   * explicit cluster identity and the other a client with a loopback in its autonomous system, and
+   * a direction between them is incomplete. It completes a single session by the peer-group types
+   * the routers already use, which a bare session completion does not, so it is offered alongside
+   * the ordinary {@code bgp-session} relation rather than inferred as a set of its own.
+   */
+  public static Optional<BgpIncidenceSet> pair(
+      ProgramModel program, RouterId first, RouterId second) {
+    Map<RouterId, ProgramObject> routers = routers(program);
+    for (List<RouterId> order : List.of(List.of(first, second), List.of(second, first))) {
+      ProgramObject reflector = routers.get(order.get(0));
+      ProgramObject client = routers.get(order.get(1));
+      if (reflector == null
+          || client == null
+          || !reflector.has("bgp-cluster-id")
+          || client.has("bgp-cluster-id")
+          || !reflector.has("loopback-address")
+          || !client.has("loopback-address")
+          || reflector.value("bgp-asn").isEmpty()
+          || !reflector.value("bgp-asn").equals(client.value("bgp-asn"))) {
+        continue;
+      }
+      List<Direction> directions = new ArrayList<>();
+      direction(program, routers, reflector, client).ifPresent(directions::add);
+      direction(program, routers, client, reflector).ifPresent(directions::add);
+      if (!directions.isEmpty()) {
+        return Optional.of(new BgpIncidenceSet(reflector.ref(), List.of(client.ref()), directions));
+      }
+    }
+    return Optional.empty();
+  }
+
   /** Returns whether neither router has a neighbor object naming the other's loopback. */
   private static boolean absent(ProgramModel program, ProgramObject first, ProgramObject second) {
     String firstPeer = second.value("loopback-address").orElse("");

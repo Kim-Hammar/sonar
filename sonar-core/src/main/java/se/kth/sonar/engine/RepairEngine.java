@@ -40,6 +40,7 @@ import se.kth.sonar.spec.Verdict;
 import se.kth.sonar.state.HypothesisDependency;
 import se.kth.sonar.state.RepairProblem;
 import se.kth.sonar.state.TransitionLedger;
+import se.kth.sonar.text.LineEdit;
 import se.kth.sonar.trace.TraceEvent;
 import se.kth.sonar.trace.TraceSink;
 import se.kth.sonar.verify.Verification;
@@ -57,6 +58,9 @@ import se.kth.sonar.verify.VerificationService;
  * empty.
  */
 public final class RepairEngine implements Repairer {
+  /** The most completions of a set-aside improvement verified at once. */
+  private static final int COMPLETIONS = 2;
+
   private final Components components;
 
   /**
@@ -230,42 +234,11 @@ public final class RepairEngine implements Repairer {
       if (batch.isEmpty()) {
         return Optional.of(new RepairResult.Stop.BudgetExhausted(Budget.Resource.VERIFICATIONS));
       }
-      List<VerificationService.Attempt> attempts =
-          components.verifier().attemptAll(snapshots, problem.specifications());
       List<Adoption.Verified> improvements = new ArrayList<>();
       List<Adoption.Verified> mixedImprovements = new ArrayList<>();
       Set<ContentHash> tested = new LinkedHashSet<>();
-      for (int at = 0; at < batch.size(); at++) {
-        Hypothesis hypothesis = batch.get(at);
-        VerificationService.Attempt attempt = attempts.get(at);
-        if (attempt instanceof VerificationService.Attempt.Rejected rejected) {
-          verifierRejected.add(attemptKey(hypothesis, dependency(hypothesis)));
-          TraceSink.emit(new TraceEvent.Rejected(id, hypothesis, rejected.reason()));
-          tested.add(hypothesis.id());
-          continue;
-        }
-        Verification verification = ((VerificationService.Attempt.Success) attempt).verification();
-        Verdict.Change change =
-            epoch.state().verification().verdict().changeTo(verification.verdict());
-        ledger.add(
-            new TransitionLedger.Transition(
-                now(), id, hypothesis, verification, change, dependency(hypothesis)));
-        TraceSink.emit(new TraceEvent.Tried(id, hypothesis, verification, change));
-        tested.add(hypothesis.id());
-        if (verification.verdict().improvesOn(epoch.state().verification().verdict())) {
-          improvements.add(new Adoption.Verified(hypothesis, verification));
-        } else if (change == Verdict.Change.NO_EFFECT) {
-          inert.add(hypothesis);
-        } else if (change == Verdict.Change.MIXED) {
-          if (verification.verdict().unresolved().size()
-              < epoch.state().verification().verdict().unresolved().size()) {
-            mixedImprovements.add(new Adoption.Verified(hypothesis, verification));
-          }
-          for (ProgramObject.Ref object : objectsOf(region)) {
-            nearMisses.merge(object, 1, Integer::sum);
-          }
-        }
-      }
+      verifyAll(region, batch, snapshots, improvements, mixedImprovements, tested);
+      completeSetAside(region, admitted, improvements, mixedImprovements, tested);
       if (improvements.isEmpty()) {
         for (Adoption.Verified mixed : mixedImprovements) {
           Optional<Adoption.Verified> part = components.adoption().part(epoch.state(), mixed);
@@ -305,6 +278,91 @@ public final class RepairEngine implements Repairer {
       trim(region, admitted.without(tested));
       belief = components.beliefs().withNearMisses(belief, nearMissesByRegion());
       return Optional.empty();
+    }
+
+    /** Verifies {@code batch} of {@code region} and records each outcome. */
+    private void verifyAll(
+        Region region,
+        List<Hypothesis> batch,
+        List<Snapshot> snapshots,
+        List<Adoption.Verified> improvements,
+        List<Adoption.Verified> mixedImprovements,
+        Set<ContentHash> tested) {
+      Region.Id id = region.id();
+      List<VerificationService.Attempt> attempts =
+          components.verifier().attemptAll(snapshots, problem.specifications());
+      for (int at = 0; at < batch.size(); at++) {
+        Hypothesis hypothesis = batch.get(at);
+        VerificationService.Attempt attempt = attempts.get(at);
+        if (attempt instanceof VerificationService.Attempt.Rejected rejected) {
+          verifierRejected.add(attemptKey(hypothesis, dependency(hypothesis)));
+          TraceSink.emit(new TraceEvent.Rejected(id, hypothesis, rejected.reason()));
+          tested.add(hypothesis.id());
+          continue;
+        }
+        Verification verification = ((VerificationService.Attempt.Success) attempt).verification();
+        Verdict.Change change =
+            epoch.state().verification().verdict().changeTo(verification.verdict());
+        ledger.add(
+            new TransitionLedger.Transition(
+                now(), id, hypothesis, verification, change, dependency(hypothesis)));
+        TraceSink.emit(new TraceEvent.Tried(id, hypothesis, verification, change));
+        tested.add(hypothesis.id());
+        if (verification.verdict().improvesOn(epoch.state().verification().verdict())) {
+          improvements.add(new Adoption.Verified(hypothesis, verification));
+        } else if (change == Verdict.Change.NO_EFFECT) {
+          inert.add(hypothesis);
+        } else if (change == Verdict.Change.MIXED) {
+          if (verification.verdict().unresolved().size()
+              < epoch.state().verification().verdict().unresolved().size()) {
+            mixedImprovements.add(new Adoption.Verified(hypothesis, verification));
+          }
+          for (ProgramObject.Ref object : objectsOf(region)) {
+            nearMisses.merge(object, 1, Integer::sum);
+          }
+        }
+      }
+    }
+
+    /**
+     * Verifies the completions of an improvement that adoption would set aside. When the best
+     * improvement breaks a requirement that a worse rival keeps, the region's untried candidates
+     * that make all its edits and more may restore the requirement while keeping its gain;
+     * verifying them before adopting keeps a workaround from taking the place of the better value.
+     */
+    private void completeSetAside(
+        Region region,
+        Region.Hypotheses.Admitted admitted,
+        List<Adoption.Verified> improvements,
+        List<Adoption.Verified> mixedImprovements,
+        Set<ContentHash> tested) {
+      Optional<Adoption.Verified> setAside =
+          components.adoption().setAside(epoch.state(), improvements, inert);
+      if (setAside.isEmpty()) {
+        return;
+      }
+      List<LineEdit> edits = setAside.get().hypothesis().transaction().edits();
+      List<Hypothesis> batch = new ArrayList<>();
+      List<Snapshot> snapshots = new ArrayList<>();
+      for (Hypothesis hypothesis : admitted.list()) {
+        List<LineEdit> extended = hypothesis.transaction().edits();
+        if (batch.size() == COMPLETIONS
+            || tested.contains(hypothesis.id())
+            || extended.size() <= edits.size()
+            || !extended.containsAll(edits)
+            || ledger.tried(hypothesis, dependency(hypothesis))) {
+          continue;
+        }
+        Snapshot snapshot = epoch.state().snapshot().patch(hypothesis.transaction()).after();
+        if (!affordable(snapshot)) {
+          break;
+        }
+        batch.add(hypothesis);
+        snapshots.add(snapshot);
+      }
+      if (!batch.isEmpty()) {
+        verifyAll(region, batch, snapshots, improvements, mixedImprovements, tested);
+      }
     }
 
     /**

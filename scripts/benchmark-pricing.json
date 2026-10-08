@@ -2,5 +2,8 @@
   "_comment": "API prices in USD per 1M tokens, keyed by model name, as in cornetto's configs/pricing.yaml. A model without an entry gets an empty cost_usd. Costs are recomputed on every export.",
   "gemini-3.8-flash": {"input": 0.75, "cached_input": 0.075, "output": 3.75},
   "typesafe/jev-1.13": {"input": 0.042, "output": 0.0},
-  "~typesafe/jev-latest": {"input": 0.042, "output": 0.0}
+  "~typesafe/jev-latest": {"input": 0.042, "output": 0.0},
+  "cloudflare/clef-flash": {"input": 0.09, "output": 0.09},
+  "perplexity/pplx-decider-v1-27b": {"input": 0.04, "output": 0.04},
+  "cloudflare/clef": {"input": 0.24, "output": 0.0}
 }

@@ -96,8 +96,10 @@ public final class IdentityRefactoring {
    *
    * <p>A duplicated Loopback0 cannot uniquely denote a router. If the unresolved positive waypoint
    * obligations name exactly one unowned /32 through that router, the ownership bijection forces
-   * that host address onto the loopback. Both the address and host mask are restored; the
-   * dependency closure subsequently updates every exact use.
+   * that host address onto the loopback. Without such a waypoint, if the unresolved obligations to
+   * deliver to a host require exactly one address that no interface owns, that address is the one
+   * the duplicate displaced. Both the address and host mask are restored; the dependency closure
+   * subsequently updates every exact use.
    */
   public static List<List<EditOperator>> verificationSeeds(
       ProgramModel program, Verification verification, ProgramObject.Ref site) {
@@ -115,7 +117,9 @@ public final class IdentityRefactoring {
             .map(ProgramObject::ref)
             .distinct()
             .count();
-    Optional<String> identity = requiredUnownedHostIdentity(program, verification, site.router());
+    Optional<String> identity =
+        requiredUnownedHostIdentity(program, verification, site.router())
+            .or(() -> uniqueUnownedHostDestination(program, verification));
     if (owners < 2 || identity.isEmpty()) {
       return List.of();
     }
@@ -348,6 +352,37 @@ public final class IdentityRefactoring {
       }
     }
     required.removeAll(reachedThroughAnother);
+    return required.size() == 1 ? Optional.of(required.iterator().next()) : Optional.empty();
+  }
+
+  /**
+   * Returns the unique /32 destination that unresolved obligations require delivered to and that no
+   * interface owns, whatever the predicate.
+   */
+  private static Optional<String> uniqueUnownedHostDestination(
+      ProgramModel program, Verification verification) {
+    Set<String> owned = new HashSet<>();
+    for (ProgramObject object : program.objects("interface")) {
+      owned.addAll(object.values("address"));
+    }
+    Set<String> required = new HashSet<>();
+    List<Specification> failures = new ArrayList<>(verification.verdict().unresolved());
+    failures.addAll(verification.verdict().sideEffects());
+    for (Specification specification : failures) {
+      if (!specification.requiresDelivery()
+          || specification.predicate().destination().length() != 32) {
+        continue;
+      }
+      String address = specification.predicate().destination().network().toString();
+      if (owned.contains(address)) {
+        continue;
+      }
+      if (specification.predicate() instanceof ForwardingPredicate.Waypointing) {
+        // A waypoint names the owner, or that a router is not it; that evidence decides alone
+        return Optional.empty();
+      }
+      required.add(address);
+    }
     return required.size() == 1 ? Optional.of(required.iterator().next()) : Optional.empty();
   }
 

@@ -96,6 +96,39 @@ public final class Adoption {
   }
 
   /**
+   * Returns the improvement with the least loss when {@link #adopt} would set it aside: it breaks a
+   * requirement satisfied in {@code state} and an improvement that keeps the requirement rivals it
+   * for the same place.
+   */
+  public Optional<Verified> setAside(
+      RepairState state, List<Verified> verified, List<Hypothesis> inert) {
+    Set<ContentHash> satisfied = new HashSet<>();
+    for (RelationInstance instance : state.program().instances()) {
+      if (instance.satisfied()) {
+        satisfied.add(instance.id());
+      }
+    }
+    List<Verified> improving =
+        withoutInertEdits(state, verified, inert).stream()
+            .filter(c -> c.verification().verdict().improvesOn(state.verification().verdict()))
+            .toList();
+    Optional<Verified> best =
+        improving.stream()
+            .min(Comparator.comparingInt((Verified c) -> c.verification().verdict().loss()));
+    if (best.isEmpty()
+        || best.get().verification().verdict().solved()
+        || !breaksARequirement(state, best.get(), satisfied)) {
+      return Optional.empty();
+    }
+    boolean replaced =
+        improving.stream()
+            .filter(other -> !other.hypothesis().id().equals(best.get().hypothesis().id()))
+            .filter(other -> !breaksARequirement(state, other, satisfied))
+            .anyMatch(other -> rivals(best.get(), other));
+    return replaced ? best : Optional.empty();
+  }
+
+  /**
    * Returns what to adopt in {@code state}, or nothing if no candidate improves it, given the
    * candidates {@code inert} that were verified to change nothing in this state.
    */

@@ -1046,6 +1046,34 @@ class GenerationTest {
   }
 
   @Test
+  void aSingleSessionBetweenAReflectorAndAClientFollowsTheObservedGroups() {
+    Snapshot snapshot =
+        Snapshot.of(
+            Map.of(
+                "1_as65001_rr1.cfg", reflector("rr1", "10.0.0.1", "10.0.0.3"),
+                "2_as65001_rr2.cfg", reflector("rr2", "10.0.0.2", "10.0.0.3"),
+                "3_as65001_c0.cfg", client("c0", "10.0.0.3", "10.0.0.1", "10.0.0.2"),
+                "4_as65001_c1.cfg", client("c1", "10.0.0.4", "10.0.0.1", null)));
+    ProgramModel program = programs.model(snapshot, Topology.of(snapshot.routers(), List.of()));
+    RouterId reflector = RouterId.of("2_as65001_rr2");
+    RouterId client = RouterId.of("4_as65001_c1");
+
+    BgpIncidenceSet pair = BgpIncidenceSet.pair(program, client, reflector).orElseThrow();
+    assertThat(pair.reflector().router()).isEqualTo(reflector);
+    assertThat(pair.clients()).extracting(ProgramObject.Ref::router).containsExactly(client);
+    assertThat(
+            new BgpIncidenceGenerator(seeds)
+                .generate(program, pair).stream()
+                    .map(hypothesis -> snapshot.patch(hypothesis.transaction()).after())
+                    .map(fixed -> fixed.text(reflector).text()))
+        .as("the reflector's side uses the group it uses for its other client")
+        .anyMatch(text -> text.contains("neighbor 10.0.0.4 peer-group IBGP"));
+    assertThat(BgpIncidenceSet.pair(program, client, RouterId.of("3_as65001_c0")))
+        .as("two clients are no reflector incidence")
+        .isEmpty();
+  }
+
+  @Test
   void aWhollyMissingSingleReflectorIncidenceIsOneAtomicTypedTransaction() {
     RouterId reflector = RouterId.of("2_as65001_rr2");
     RouterId client = RouterId.of("4_as65001_c1");
@@ -2718,6 +2746,27 @@ class GenerationTest {
             IdentityRefactoring.verificationSeeds(
                 colliding.program(), transitVerification, firstLoopback))
         .isEmpty();
+    // Without a waypoint, the one required host address nobody owns is the one displaced
+    Specification unownedHost =
+        new Specification(
+            new ForwardingPredicate.Reachability(three, Prefix.parse("10.0.0.2/32")),
+            Specification.Status.parse("broken_removed"));
+    Verification reachabilityVerification =
+        new Verification(
+            snapshot.id(),
+            new Verdict(List.of(unownedHost), List.of(), List.of()),
+            DataPlaneEvidence.none());
+    List<List<EditOperator>> displacedSeeds =
+        IdentityRefactoring.verificationSeeds(
+            colliding.program(), reachabilityVerification, firstLoopback);
+    assertThat(displacedSeeds).hasSize(1);
+    assertThat(
+            snapshot
+                .patch(Hypothesis.of(snapshot, displacedSeeds.getFirst()).transaction())
+                .after()
+                .text(ONE)
+                .text())
+        .contains("ip address 10.0.0.2 255.255.255.255");
     assertThat(IdentityRefactoring.complete(colliding.program(), transitVerification, base))
         .isEmpty();
     List<List<EditOperator>> beyondSeeds =

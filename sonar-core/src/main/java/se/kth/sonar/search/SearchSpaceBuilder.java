@@ -40,6 +40,7 @@ import se.kth.sonar.program.BgpMesh;
 import se.kth.sonar.program.ProgramModel;
 import se.kth.sonar.program.ProgramObject;
 import se.kth.sonar.program.RelationInstance;
+import se.kth.sonar.relation.ObjectType;
 import se.kth.sonar.relation.Requirement;
 import se.kth.sonar.spec.ForwardingPredicate;
 import se.kth.sonar.spec.Specification;
@@ -415,6 +416,11 @@ public final class SearchSpaceBuilder {
                       InterdomainTransferClosure.closeLink(
                           state.program(), relation.instance(), List.copyOf(all)));
                 }
+                if (relation.instance().relation().equals("bgp-session")) {
+                  sessionIncidence(state.program(), relation.instance())
+                      .ifPresent(
+                          incidence -> all.addAll(incidences.generate(state.program(), incidence)));
+                }
                 if (relation.instance().relation().equals("route-map-liveness")) {
                   all.addAll(policyPermutations(state.program(), relation.instance()));
                 }
@@ -455,6 +461,25 @@ public final class SearchSpaceBuilder {
       admitted = admitted.subList(0, bounds.maxHypothesesPerRegion());
     }
     return region.withHypotheses(new Region.Hypotheses.Admitted(admitted));
+  }
+
+  /**
+   * Returns the reflector incidence of a BGP session relation: between the router of its local
+   * neighbor and the router that neighbor's peer address belongs to, whether or not the remote
+   * neighbor exists.
+   */
+  private static Optional<BgpIncidenceSet> sessionIncidence(
+      ProgramModel program, RelationInstance session) {
+    ProgramObject.Ref local = session.roles().get("local");
+    if (local == null) {
+      return Optional.empty();
+    }
+    return program
+        .object(local)
+        .flatMap(neighbor -> neighbor.value("peer-router"))
+        .filter(value -> ProgramObject.Ref.isReference(value, ObjectType.ROUTER))
+        .map(value -> ProgramObject.Ref.parse(value).router())
+        .flatMap(peer -> BgpIncidenceSet.pair(program, local.router(), peer));
   }
 
   /** Makes a direct policy/filter transfer repair reachable from either object region. */

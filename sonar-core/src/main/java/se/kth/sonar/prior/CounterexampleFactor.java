@@ -273,6 +273,11 @@ public final class CounterexampleFactor implements PriorFactor {
       }
       if (RouterEvidence.noRouteAtSource(evidence, predicate)) {
         Set<ProgramObject.Ref> exactOrigins = origins(state.program(), predicate.destination());
+        if (exactOrigins.isEmpty()
+            && specification.requiresDelivery()
+            && predicate.destination().length() == 32) {
+          exactOrigins = collidingHostOrigins(state.program());
+        }
         for (ProgramObject.Ref origin : exactOrigins) {
           noRouteOrigins.merge(origin, 1, Integer::sum);
         }
@@ -393,6 +398,31 @@ public final class CounterexampleFactor implements PriorFactor {
         origins.add(object.ref());
       }
     }
+    return Set.copyOf(origins);
+  }
+
+  /**
+   * Returns the host interfaces whose address another interface also has. When nothing originates a
+   * required host destination, the address was renumbered away, and a renumbering that left a
+   * duplicate behind is where it went: the interface that should hold the missing address is one of
+   * those holding a duplicated one.
+   */
+  private static Set<ProgramObject.Ref> collidingHostOrigins(ProgramModel program) {
+    Map<String, Set<ProgramObject.Ref>> byAddress = new HashMap<>();
+    for (ProgramObject object : program.objects("interface")) {
+      boolean host =
+          object.values("subnet").stream()
+              .map(Prefix::tryParse)
+              .flatMap(Optional::stream)
+              .anyMatch(prefix -> prefix.length() == 32);
+      if (host) {
+        for (String address : object.values("address")) {
+          byAddress.computeIfAbsent(address, ignored -> new HashSet<>()).add(object.ref());
+        }
+      }
+    }
+    Set<ProgramObject.Ref> origins = new HashSet<>();
+    byAddress.values().stream().filter(owners -> owners.size() > 1).forEach(origins::addAll);
     return Set.copyOf(origins);
   }
 

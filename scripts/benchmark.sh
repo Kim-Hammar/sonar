@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/benchmark.sh [--run-name NAME] [--policies "greedy koopman"] [--models "MODEL ..."]
 #                             [--spec-pcts "10 100"] [--seeds "42 ..."] [--scenarios a,b,...]
-#                             [--scenario-parallelism N] [--dry-run]
+#                             [--scenario-parallelism N] [--theta θ] [--dry-run]
 #
 # The sonar counterpart of the Cornetto comparison benchmark (src/benchmark/compare.py in the
 # cornetto repository): repairs every scenario once per (policy, model, specification share, seed)
@@ -31,6 +31,7 @@ spec_pcts="10 100"
 seeds="42"
 scenarios=""
 scenario_parallelism=1
+theta=""
 dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +42,7 @@ while [ $# -gt 0 ]; do
     --seeds) seeds="$2"; shift 2 ;;
     --scenarios) scenarios="$2"; shift 2 ;;
     --scenario-parallelism) scenario_parallelism="$2"; shift 2 ;;
+    --theta) theta="$2"; shift 2 ;;
     --dry-run) dry_run=true; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -67,6 +69,7 @@ if ! $dry_run; then
   echo "$java_home" > "$run_dir/java-home"
   git rev-parse HEAD > "$run_dir/git-commit"
   git status --short > "$run_dir/git-status"
+  git diff > "$run_dir/git-diff"
 fi
 
 for model in $models; do
@@ -97,6 +100,7 @@ for model in $models; do
           --dataset "$dataset"
           --specifications "$spec_pct"
           --policy "$policy"
+          ${theta:+--theta "$theta"}
           --seed "$seed"
           --model "$model"
           --verification-workers 4
@@ -116,6 +120,7 @@ for model in $models; do
         fi
         mkdir -p "$cell"
         echo "$model" > "$cell/model"
+        echo "${theta:-default}" > "$cell/theta"
         # A scenario that is not solved is a result, not a reason to stop the sweep
         JAVA_HOME="$(cat "$run_dir/java-home")" "${command[@]}" 2>&1 | tee -a "$cell/console.log" || true
         python3 scripts/benchmark-export.py "$run_dir"

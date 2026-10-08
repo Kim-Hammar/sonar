@@ -423,6 +423,34 @@ class RepairEngineTest {
           .as("the extension gives r2 a BGP identity other than its loopback, which it had")
           .containsExactly(repair);
       assertThat(
+              adoption.setAside(
+                  state,
+                  List.of(
+                      verified.apply(extended, List.of(SESSION)),
+                      verified.apply(repair, List.of(SESSION, third))),
+                  List.of()))
+          .as("the better candidate set aside for its rival is the one to complete")
+          .map(Adoption.Verified::hypothesis)
+          .contains(extended);
+      assertThat(
+              adoption.setAside(
+                  state,
+                  List.of(
+                      verified.apply(identity, List.of(SESSION)),
+                      verified.apply(repair, List.of(SESSION, third))),
+                  List.of()))
+          .as("without a rival for the same place nothing is set aside")
+          .isEmpty();
+      assertThat(
+              adoption.setAside(
+                  state,
+                  List.of(
+                      verified.apply(extended, List.of()),
+                      verified.apply(repair, List.of(SESSION, third))),
+                  List.of()))
+          .as("a candidate that solves everything is adopted, not set aside")
+          .isEmpty();
+      assertThat(
               adoption
                   .adopt(
                       state,
