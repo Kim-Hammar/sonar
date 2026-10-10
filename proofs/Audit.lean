@@ -7,3 +7,9 @@ import Sonar
 
 -- Proposition 1: existence of an optimal search policy.
 #print axioms Sonar.SearchModel.exists_optimal_policy
+
+-- Proposition 2: correctness of the reduction from min-sum set cover.
+#print axioms Sonar.MinSumSetCover.Instance.searchCost_policyOf_le
+#print axioms Sonar.MinSumSetCover.Instance.mssc_extract_le
+#print axioms Sonar.MinSumSetCover.Instance.extract_optimal
+#print axioms Sonar.MinSumSetCover.Instance.searchCost_optimal_eq

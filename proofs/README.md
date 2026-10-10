@@ -24,6 +24,7 @@ lake build           # build the Sonar library, which checks every proof
 | Paper | Lean | Module |
 |---|---|---|
 | Proposition 1 (existence of an optimal search policy) | `Sonar.SearchModel.exists_optimal_policy` | `Sonar/Existence.lean` |
+| Proposition 2 (NP-hardness): correctness of the reduction from min-sum set cover | `Sonar.MinSumSetCover.Instance.extract_optimal`, `searchCost_optimal_eq` | `Sonar/Reduction.lean` |
 
 ## Coverage
 
@@ -40,3 +41,17 @@ many regions (`[Finite X]`, at least one) and finitely many verification outcome
 verified; these are abstracted into the outcome probabilities and successor states. The theorem
 holds for every such model, and its proof follows the paper's (truncation at
 `⌈λ g_Φ(c_1)⌉`, compactness by Tychonoff, lower semicontinuity of `J = sup_T J_T`).
+
+**Proposition 2.** Formalized: the reduction and its correctness. From a min-sum set cover (MSSC)
+instance with `n` sets covering `U`, the module builds the search problem of the proof as a
+`SearchModel` (one region per set, one equally likely cause per element, `g_Φ(c_1) = 1`) and
+proves (a) every ordering yields a policy whose expected cost is at most the ordering's MSSC cost
+divided by `|U|` (`searchCost_policyOf_le`); (b) every policy yields an ordering, read off its
+search while the network is not repaired, whose MSSC cost is at most `|U|` times the policy's
+expected cost (`mssc_extract_le`); hence the ordering extracted from an optimal policy is an
+optimal MSSC ordering (`extract_optimal`), and the optimal expected cost is the optimal MSSC cost
+divided by `|U|` (`searchCost_optimal_eq`). The formalization uses `λ ≥ n` (the number of sets)
+rather than the paper's `λ > |U|`; both are polynomial in the instance, and `λ ≥ n` makes (b) hold
+for every policy. Not formalized (cited): that MSSC is NP-hard [Feige, Lovász, Tetali 2004,
+Thm. 1], and that the construction and the extraction (simulating the policy for at most `n`
+steps) run in polynomial time.
