@@ -22,6 +22,15 @@ public final class GreedyPolicy extends BestRegionPolicy {
 
   /** Creates a policy that verifies {@code batch} candidates per batch. */
   public GreedyPolicy(int batch) {
+    this(batch, true);
+  }
+
+  /**
+   * Creates a policy that verifies {@code batch} candidates per batch and asks the decision model
+   * to assess regions if {@code assessing}.
+   */
+  public GreedyPolicy(int batch, boolean assessing) {
+    super(assessing);
     if (batch < 1) {
       throw new IllegalArgumentException("batch must be at least 1: " + batch);
     }

@@ -26,17 +26,32 @@ public final class EpochBuilder {
   private final ProgramService programs;
   private final SearchSpaceBuilder spaces;
   private final RegionPrior prior;
+  private final boolean fixed;
 
   /** Creates a builder from the program service, the space builder and the prior. */
   public EpochBuilder(ProgramService programs, SearchSpaceBuilder spaces, RegionPrior prior) {
+    this(programs, spaces, prior, false);
+  }
+
+  private EpochBuilder(
+      ProgramService programs, SearchSpaceBuilder spaces, RegionPrior prior, boolean fixed) {
     this.programs = Objects.requireNonNull(programs, "programs");
     this.spaces = Objects.requireNonNull(spaces, "spaces");
     this.prior = Objects.requireNonNull(prior, "prior");
+    this.fixed = fixed;
   }
 
-  /** Returns a builder whose prior has {@code factor} as well. */
+  /**
+   * Returns a builder whose prior is uniform over regions and stays so: {@link #with} adds no
+   * factor (the uniform-prior ablation).
+   */
+  public static EpochBuilder uniform(ProgramService programs, SearchSpaceBuilder spaces) {
+    return new EpochBuilder(programs, spaces, new RegionPrior(List.of()), true);
+  }
+
+  /** Returns a builder whose prior has {@code factor} as well, unless the prior is fixed. */
   public EpochBuilder with(PriorFactor factor) {
-    return new EpochBuilder(programs, spaces, prior.with(factor));
+    return fixed ? this : new EpochBuilder(programs, spaces, prior.with(factor), false);
   }
 
   /** Returns the program service. */

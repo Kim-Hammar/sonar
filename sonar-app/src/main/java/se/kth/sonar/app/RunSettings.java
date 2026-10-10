@@ -22,6 +22,12 @@ import se.kth.sonar.policy.SearchPolicy;
  * @param timeLimit the per-scenario time limit, if any
  * @param seed the seed of every random choice
  * @param koopman the parameters of the Koopman-index policy, or empty for the greedy policy
+ * @param uniformPrior whether every region gets the same prior weight, without evidence factors or
+ *     experience (an ablation)
+ * @param regionAssessment whether the decision model assesses regions; without it (an ablation) the
+ *     belief learns from verification alone and the model only ranks candidates
+ * @param localization whether regions are built only on the routers the verifier's evidence
+ *     implicates; without it (an ablation) they are built on every router
  */
 public record RunSettings(
     int specificationPercent,
@@ -30,7 +36,10 @@ public record RunSettings(
     Map<Budget.Resource, Long> limits,
     Optional<Duration> timeLimit,
     long seed,
-    Optional<KoopmanPolicy.Parameters> koopman) {
+    Optional<KoopmanPolicy.Parameters> koopman,
+    boolean uniformPrior,
+    boolean regionAssessment,
+    boolean localization) {
 
   /**
    * Checks the settings.
@@ -63,6 +72,28 @@ public record RunSettings(
     Objects.requireNonNull(koopman, "koopman");
   }
 
+  /** Creates settings with the informed prior. */
+  public RunSettings(
+      int specificationPercent,
+      int verificationBatch,
+      ParallelismConfig parallelism,
+      Map<Budget.Resource, Long> limits,
+      Optional<Duration> timeLimit,
+      long seed,
+      Optional<KoopmanPolicy.Parameters> koopman) {
+    this(
+        specificationPercent,
+        verificationBatch,
+        parallelism,
+        limits,
+        timeLimit,
+        seed,
+        koopman,
+        false,
+        true,
+        true);
+  }
+
   /** Creates settings for the greedy policy. */
   public RunSettings(
       int specificationPercent,
@@ -84,8 +115,9 @@ public record RunSettings(
   /** Returns the search policy these settings choose. */
   public SearchPolicy policy() {
     return koopman
-        .<SearchPolicy>map(parameters -> new KoopmanPolicy(parameters, verificationBatch))
-        .orElseGet(() -> new GreedyPolicy(verificationBatch));
+        .<SearchPolicy>map(
+            parameters -> new KoopmanPolicy(parameters, verificationBatch, regionAssessment))
+        .orElseGet(() -> new GreedyPolicy(verificationBatch, regionAssessment));
   }
 
   /** Returns the settings used unless the user chooses others. */

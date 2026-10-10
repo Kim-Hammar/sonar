@@ -174,6 +174,27 @@ class GreedyPolicyTest {
   }
 
   @Test
+  void withoutRegionAssessmentItExpandsAndRanksWithoutAssessing() {
+    RepairState state = state(false);
+    List<Hypothesis> hypotheses = new ArrayList<>();
+    for (String address : List.of("10.0.0.2", "10.0.0.3", "10.0.0.4")) {
+      hypotheses.add(hypothesis(state, address));
+    }
+    SearchPolicy unassessing = new GreedyPolicy(2, false);
+    SearchSpace space =
+        SearchSpace.partitioned(
+            List.of(
+                region("a", new Region.Hypotheses.Deferred(3)),
+                region("b", new Region.Hypotheses.Deferred(3))),
+            new SearchSpace.Capacity(4, 20));
+    assertThat(unassessing.next(state, space, belief(space), Budget.unlimited()))
+        .isEqualTo(new SearchPolicy.Action.Expand(new Region.Id("a")));
+    space = space.replace(region("a", new Region.Hypotheses.Admitted(hypotheses)));
+    assertThat(unassessing.next(state, space, belief(space), Budget.unlimited()))
+        .isEqualTo(new SearchPolicy.Action.Rank(new Region.Id("a")));
+  }
+
+  @Test
   void aCandidateWithAnInventedValueRanksAfterTheOthersTheRankingGivesAChance() {
     RepairState state = state(false);
     Hypothesis observed = hypothesis(state, "10.0.0.2");

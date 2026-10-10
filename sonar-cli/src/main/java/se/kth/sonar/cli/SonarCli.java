@@ -137,9 +137,42 @@ public final class SonarCli implements Runnable {
             "Environment variable containing the endpoint API key (default: ${DEFAULT-VALUE}).")
     private String apiKeyVariable = HttpTransport.Settings.openRouter().apiKeyVariable();
 
+    @Option(
+        names = "--decision-api",
+        paramLabel = "NAME",
+        description =
+            "Protocol of the decision endpoint: decisions asks Jev's typed questions; chat asks an"
+                + " LLM the same questions through OpenAI-compatible chat completions, an ablation"
+                + " (default: ${DEFAULT-VALUE}).")
+    private DecisionApi decisionApi = DecisionApi.decisions;
+
+    @Option(
+        names = "--decision-timeout",
+        paramLabel = "SECONDS",
+        description =
+            "Seconds to wait for one decision reply (default: 45, or 180 with --decision-api"
+                + " chat).")
+    private Long decisionTimeout;
+
+    /** The protocols a decision endpoint may speak. */
+    enum DecisionApi {
+      decisions,
+      chat
+    }
+
     HttpTransport.Settings settings() {
       HttpTransport.Settings defaults = HttpTransport.Settings.openRouter();
-      return new HttpTransport.Settings(endpoint, model, apiKeyVariable, defaults.timeout());
+      boolean chat = decisionApi == DecisionApi.chat;
+      Duration timeout =
+          decisionTimeout != null
+              ? Duration.ofSeconds(decisionTimeout)
+              : chat ? Duration.ofSeconds(180) : defaults.timeout();
+      return new HttpTransport.Settings(
+          endpoint,
+          model,
+          apiKeyVariable,
+          timeout,
+          chat ? HttpTransport.Api.CHAT : HttpTransport.Api.DECISIONS);
     }
   }
 
@@ -292,10 +325,40 @@ public final class SonarCli implements Runnable {
                 + " verifications (default: ${DEFAULT-VALUE}).")
     private double lambda;
 
+    @Option(
+        names = "--prior",
+        defaultValue = "informed",
+        paramLabel = "NAME",
+        description =
+            "Prior over regions: informed weighs them by the evidence factors and experience;"
+                + " uniform gives every region the same weight, an ablation (default:"
+                + " ${DEFAULT-VALUE}).")
+    private Prior prior;
+
+    @Option(
+        names = "--no-region-assessment",
+        description =
+            "Never ask the decision model to assess regions, so the belief learns from"
+                + " verification alone and the model only ranks candidates (an ablation).")
+    private boolean noRegionAssessment;
+
+    @Option(
+        names = "--no-localization",
+        description =
+            "Build search regions on every router instead of only on the routers the verifier's"
+                + " evidence implicates in a violated specification (an ablation).")
+    private boolean noLocalization;
+
     /** The search policies a run can choose. */
     enum Policy {
       greedy,
       koopman
+    }
+
+    /** The priors a run can choose. */
+    enum Prior {
+      informed,
+      uniform
     }
 
     @Option(
@@ -384,7 +447,10 @@ public final class SonarCli implements Runnable {
               seed,
               policy == Policy.koopman
                   ? Optional.of(new KoopmanPolicy.Parameters(theta, lambda))
-                  : Optional.empty());
+                  : Optional.empty(),
+              prior == Prior.uniform,
+              !noRegionAssessment,
+              !noLocalization);
       Workspace workspace = workspace(spec, dataset, output);
       HttpTransport.Settings model = decisions.settings();
       PrintWriter out = spec.commandLine().getOut();

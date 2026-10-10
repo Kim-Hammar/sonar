@@ -31,14 +31,31 @@ public final class HttpTransport implements DecisionTransport {
    * @param model the model name
    * @param apiKeyVariable the environment variable that holds the API key
    * @param timeout the time to wait for one reply
+   * @param api the protocol the endpoint speaks
    */
-  public record Settings(URI endpoint, String model, String apiKeyVariable, Duration timeout) {
+  public record Settings(
+      URI endpoint, String model, String apiKeyVariable, Duration timeout, Api api) {
     /** Checks the components. */
     public Settings {
       Objects.requireNonNull(endpoint, "endpoint");
       Objects.requireNonNull(model, "model");
       Objects.requireNonNull(apiKeyVariable, "apiKeyVariable");
       Objects.requireNonNull(timeout, "timeout");
+      Objects.requireNonNull(api, "api");
+    }
+
+    /** Creates settings for an endpoint that speaks Jev's decision protocol. */
+    public Settings(URI endpoint, String model, String apiKeyVariable, Duration timeout) {
+      this(endpoint, model, apiKeyVariable, timeout, Api.DECISIONS);
+    }
+
+    /** Returns the transport these settings describe. */
+    public DecisionTransport transport() {
+      HttpTransport http = new HttpTransport(this);
+      return switch (api) {
+        case DECISIONS -> http;
+        case CHAT -> new ChatTransport(http, model);
+      };
     }
 
     /** Returns the settings of the public Jev endpoint on OpenRouter. */
@@ -49,6 +66,14 @@ public final class HttpTransport implements DecisionTransport {
           "OPENROUTER_API_KEY",
           Duration.ofSeconds(45));
     }
+  }
+
+  /** The protocols a decision endpoint may speak. */
+  public enum Api {
+    /** Jev's typed decision questions, as on OpenRouter's decisions endpoint. */
+    DECISIONS,
+    /** OpenAI-compatible chat completions, asked the same questions by {@link ChatTransport}. */
+    CHAT
   }
 
   /** Creates a transport; no connection is opened until the first request. */

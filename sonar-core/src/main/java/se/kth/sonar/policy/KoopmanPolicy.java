@@ -55,6 +55,15 @@ public final class KoopmanPolicy extends BestRegionPolicy {
 
   /** Creates a policy with {@code parameters} that verifies at least {@code minimum} at a time. */
   public KoopmanPolicy(Parameters parameters, int minimum) {
+    this(parameters, minimum, true);
+  }
+
+  /**
+   * Creates a policy with {@code parameters} that verifies at least {@code minimum} at a time and
+   * asks the decision model to assess regions if {@code assessing}.
+   */
+  public KoopmanPolicy(Parameters parameters, int minimum, boolean assessing) {
+    super(assessing);
     this.parameters = Objects.requireNonNull(parameters, "parameters");
     if (minimum < 1) {
       throw new IllegalArgumentException("the minimum batch must be at least 1: " + minimum);

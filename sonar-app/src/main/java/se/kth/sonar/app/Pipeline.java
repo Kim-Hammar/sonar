@@ -115,7 +115,7 @@ public final class Pipeline implements AutoCloseable {
             settings.parallelism().decisionConcurrency(),
             () ->
                 new JevDecisionModel(
-                    new CachingTransport(new HttpTransport(decisions), workspace.decisionCache()),
+                    new CachingTransport(decisions.transport(), workspace.decisionCache()),
                     new JevRequestCodec(decisions.model()),
                     PAYLOAD_LIMIT),
             model -> {});
@@ -177,6 +177,14 @@ public final class Pipeline implements AutoCloseable {
    * search space without a run.
    */
   public static EpochBuilder epochs(Dialect dialect, ExecutionContext context) {
+    return epochs(dialect, context, true);
+  }
+
+  /**
+   * Returns the epoch builder of {@code dialect} on {@code context} whose search space is built on
+   * the routers the evidence implicates if {@code localized}, and on every router otherwise.
+   */
+  public static EpochBuilder epochs(Dialect dialect, ExecutionContext context, boolean localized) {
     ProgramService programs = new ProgramService(dialect, new CiscoIosSemantics(dialect), context);
     Bounds bounds = Bounds.defaults();
     SeedGenerator seeds =
@@ -188,7 +196,8 @@ public final class Pipeline implements AutoCloseable {
             new Admissibility(programs, context),
             new SearchSpace.Capacity(PARTITION_REGIONS, PARTITION_HYPOTHESES),
             bounds,
-            context);
+            context,
+            localized);
     RegionPrior prior =
         new RegionPrior(
             List.of(
@@ -206,7 +215,11 @@ public final class Pipeline implements AutoCloseable {
 
   private RepairEngine.Components components(Dialect dialect) {
     VerificationService verifier = new VerificationService(engines, context);
-    EpochBuilder epochs = epochs(dialect, context);
+    EpochBuilder informed = epochs(dialect, context, settings.localization());
+    EpochBuilder epochs =
+        settings.uniformPrior()
+            ? EpochBuilder.uniform(informed.programs(), informed.spaces())
+            : informed;
     return new RepairEngine.Components(
         epochs,
         verifier,

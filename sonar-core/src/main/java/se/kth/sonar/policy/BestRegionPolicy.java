@@ -21,10 +21,24 @@ import se.kth.sonar.state.RepairState;
  * region's partition when the partition has several regions and has not been assessed in this
  * state; asks the subclass how many candidates to verify, which may stop the search; generates the
  * region's candidates when they are deferred; asks the model to rank them when there are more than
- * it will verify and they are unranked; and otherwise verifies that many in rank order.
+ * it will verify and they are unranked; and otherwise verifies that many in rank order. Without
+ * region assessment (an ablation) it never asks for the first, so the belief learns from
+ * verification alone, and the model only ranks candidates.
  */
 abstract class BestRegionPolicy implements SearchPolicy {
   private static final int COMPARISON_REGIONS = 16;
+
+  private final boolean assessing;
+
+  /** Creates a policy that asks the decision model to assess regions. */
+  BestRegionPolicy() {
+    this(true);
+  }
+
+  /** Creates a policy that asks the decision model to assess regions if {@code assessing}. */
+  BestRegionPolicy(boolean assessing) {
+    this.assessing = assessing;
+  }
 
   /**
    * Returns how many candidates of {@code best} to verify in this step, or nothing to stop
@@ -56,7 +70,7 @@ abstract class BestRegionPolicy implements SearchPolicy {
     Region.Id best = posterior.argmax();
     Region region = space.region(best).orElseThrow();
     boolean canDecide = !budget.exhausted(Budget.Resource.DECISIONS);
-    if (!belief.isAssessed(best) && canDecide) {
+    if (assessing && !belief.isAssessed(best) && canDecide) {
       List<Region.Id> competitors =
           posterior.outcomes().stream()
               .filter(id -> !belief.isAssessed(id))

@@ -61,6 +61,9 @@ import se.kth.sonar.verify.DataPlaneEvidence;
  * the candidates of one region only when the search needs them, closing every seed in parallel on
  * the compute lane. {@link #refresh} rebuilds the space for a new state and keeps the candidates of
  * every region whose configurations are unchanged.
+ *
+ * <p>Without localization (an ablation), every router counts as implicated in every violated
+ * specification, so regions are built on all routers instead of the ones the evidence names.
  */
 public final class SearchSpaceBuilder {
   private static final int RELATION_BOUND = 16;
@@ -82,6 +85,7 @@ public final class SearchSpaceBuilder {
   private final SearchSpace.Capacity capacity;
   private final Bounds bounds;
   private final ExecutionContext context;
+  private final boolean localized;
 
   /** Creates a builder from the generation stages. */
   public SearchSpaceBuilder(
@@ -91,6 +95,21 @@ public final class SearchSpaceBuilder {
       SearchSpace.Capacity capacity,
       Bounds bounds,
       ExecutionContext context) {
+    this(seeds, closure, admissibility, capacity, bounds, context, true);
+  }
+
+  /**
+   * Creates a builder from the generation stages that builds regions only on the routers the
+   * evidence implicates if {@code localized}, and on every router otherwise.
+   */
+  public SearchSpaceBuilder(
+      SeedGenerator seeds,
+      ClosureEngine closure,
+      Admissibility admissibility,
+      SearchSpace.Capacity capacity,
+      Bounds bounds,
+      ExecutionContext context,
+      boolean localized) {
     this.seeds = Objects.requireNonNull(seeds, "seeds");
     this.closure = Objects.requireNonNull(closure, "closure");
     this.admissibility = Objects.requireNonNull(admissibility, "admissibility");
@@ -105,12 +124,14 @@ public final class SearchSpaceBuilder {
     this.capacity = Objects.requireNonNull(capacity, "capacity");
     this.bounds = Objects.requireNonNull(bounds, "bounds");
     this.context = Objects.requireNonNull(context, "context");
+    this.localized = localized;
   }
 
   /** Returns the search space of {@code state} with every region deferred. */
   public SearchSpace build(RepairState state) {
     ProgramModel program = state.program();
-    Map<RouterId, List<Specification>> implicated = RouterEvidence.of(state).unresolvedByRouter();
+    Map<RouterId, List<Specification>> implicated =
+        localized ? RouterEvidence.of(state).unresolvedByRouter() : everywhere(state);
     List<Region> regions = new ArrayList<>();
     Set<Region.Id> ids = new HashSet<>();
     Map<ProgramObject.Ref, Set<Prefix>> missingPermits =
@@ -326,6 +347,18 @@ public final class SearchSpaceBuilder {
       }
     }
     return SearchSpace.partitioned(regions, capacity);
+  }
+
+  /** Returns every router of the network, each implicated in every unresolved specification. */
+  private static Map<RouterId, List<Specification>> everywhere(RepairState state) {
+    List<Specification> unresolved = List.copyOf(state.verification().verdict().unresolved());
+    Map<RouterId, List<Specification>> implicated = new LinkedHashMap<>();
+    if (!unresolved.isEmpty()) {
+      for (RouterId router : state.snapshot().routers()) {
+        implicated.put(router, unresolved);
+      }
+    }
+    return implicated;
   }
 
   /**

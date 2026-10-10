@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.within;
 
 import java.util.List;
 import java.util.SequencedMap;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,7 @@ class EpochBuilderTest {
 
   private static ExecutionContext context;
   private static EpochBuilder epochs;
+  private static EpochBuilder unlocalized;
 
   @BeforeAll
   static void open() {
@@ -59,6 +62,18 @@ class EpochBuilderTest {
             new SearchSpace.Capacity(16, 64),
             bounds,
             context);
+    unlocalized =
+        new EpochBuilder(
+            programs,
+            new SearchSpaceBuilder(
+                seeds,
+                new ClosureEngine(programs, seeds, bounds),
+                new Admissibility(programs, context),
+                new SearchSpace.Capacity(16, 64),
+                bounds,
+                context,
+                false),
+            new RegionPrior(List.of()));
     epochs =
         new EpochBuilder(
             programs,
@@ -175,5 +190,49 @@ class EpochBuilderTest {
     assertThat(extended.prior().weight(region, epoch.state()))
         .isCloseTo(2 * epochs.prior().weight(region, epoch.state()), within(1e-12));
     assertThat(extended.prior(epoch).asMap()).isEqualTo(epochs.prior(epoch).asMap());
+  }
+
+  @Test
+  void aUniformBuilderWeighsEveryRegionAlikeAndAddsNoFactor() {
+    RepairProblem problem = RepairEngineTest.problem();
+    EpochBuilder uniform =
+        EpochBuilder.uniform(epochs.programs(), epochs.spaces())
+            .with(
+                new PriorFactor() {
+                  @Override
+                  public String name() {
+                    return "doubling";
+                  }
+
+                  @Override
+                  public double weight(Region region, RepairState state) {
+                    return 2;
+                  }
+                });
+    Epoch epoch = uniform.initial(problem, verify(problem, problem.initial()));
+    assertThat(uniform.prior().factors()).isEmpty();
+    double share = 1.0 / epoch.space().size();
+    assertThat(uniform.prior(epoch).asMap().values())
+        .isNotEmpty()
+        .allSatisfy(probability -> assertThat(probability).isCloseTo(share, within(1e-12)));
+  }
+
+  @Test
+  void withoutLocalizationEveryRouterGetsSiteRegions() {
+    RepairProblem problem = RepairEngineTest.problem();
+    Verification baseline = verify(problem, problem.initial());
+    Set<String> localized = siteRouters(epochs.initial(problem, baseline));
+    Set<String> everywhere = siteRouters(unlocalized.initial(problem, baseline));
+    assertThat(everywhere)
+        .containsAll(localized)
+        .containsExactlyInAnyOrderElementsOf(
+            problem.initial().routers().stream().map(RouterId::toString).toList());
+  }
+
+  private static Set<String> siteRouters(Epoch epoch) {
+    return epoch.space().regions().stream()
+        .filter(region -> region.id().value().startsWith("site:"))
+        .map(region -> region.reads().keySet().iterator().next().toString())
+        .collect(Collectors.toSet());
   }
 }

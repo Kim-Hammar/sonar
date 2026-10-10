@@ -80,9 +80,9 @@ def cost_usd(row, pricing):
     ) / 1e6
 
 
-def cell_rows(cell_dir, method, model, spec_pct, seed):
+def cell_rows(cell_dir, method, model, spec_pct, seed, provider="openrouter"):
     """One row per scenario of a cell; the last finished event of a scenario wins."""
-    base = {"method": method, "provider": "openrouter", "model": model,
+    base = {"method": method, "provider": provider, "model": model,
             "spec_pct": spec_pct, "seed": seed}
     rows, attempted, failures = {}, {}, {}
     for run in sorted((cell_dir / "runs").glob("*/run.json")):
@@ -170,9 +170,11 @@ def load_sonar_rows(run_dir):
         model_slug = cell.parents[1].name
         config = cell / "model"
         model = config.read_text().strip() if config.exists() else model_slug
+        provider_file = cell / "provider"
+        provider = provider_file.read_text().strip() if provider_file.exists() else "openrouter"
         spec_pct = int(cell.parent.name[len("spec-"):-len("pct")])
         seed = int(cell.name[len("seed-"):])
-        rows.extend(cell_rows(cell, method, model, spec_pct, seed))
+        rows.extend(cell_rows(cell, method, model, spec_pct, seed, provider))
     return rows
 
 

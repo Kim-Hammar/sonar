@@ -2,6 +2,8 @@
 # Usage: scripts/benchmark.sh [--run-name NAME] [--policies "greedy koopman"] [--models "MODEL ..."]
 #                             [--spec-pcts "10 100"] [--seeds "42 ..."] [--scenarios a,b,...]
 #                             [--scenario-parallelism N] [--theta θ] [--dry-run]
+#                             [--variant NAME --extra-args "ARGS"] [--provider NAME]
+#                             [--install NAME]
 #
 # The sonar counterpart of the Cornetto comparison benchmark (src/benchmark/compare.py in the
 # cornetto repository): repairs every scenario once per (policy, model, specification share, seed)
@@ -11,6 +13,12 @@
 # Layout, mirroring Cornetto's results_bench/<run>:
 #   output/benchmark/<run>/cells/sonar-<policy>/<provider>-<model>/spec-<pct>pct/seed-<seed>/
 #       runs/<id>/events.jsonl, decision-cache, batfish   (the sonar output directory of the cell)
+#   An ablation (--variant NAME, with its repair options in --extra-args) gets the method
+#   sonar-<policy>-<variant>, e.g. --variant uniform-prior --extra-args "--prior uniform".
+#   A decision model served elsewhere than OpenRouter names its provider, e.g. an LLM in Jev's
+#   place: --provider google --models gemini-3.8-flash --extra-args "--decision-api chat
+#   --endpoint https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+#   --api-key-variable GOOGLE_API_KEY".
 #   output/benchmark/<run>/per_scenario.csv, summary_by_seed.csv, summary.csv, summary.json
 #
 # Every cell has its own output directory and hence an empty decision cache, so the recorded token
@@ -19,7 +27,8 @@
 # at 100 %) are skipped and exported as missing_spec, as Cornetto does.
 #
 # The sonar build is installed once into output/benchmark/<run>/sonar-install and run from there,
-# so rebuilding the project does not replace the jars under a running benchmark.
+# so rebuilding the project does not replace the jars under a running benchmark. A sweep started
+# while another one runs in the same run directory needs its own --install name.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 cd "$root"
@@ -32,6 +41,10 @@ seeds="42"
 scenarios=""
 scenario_parallelism=1
 theta=""
+variant=""
+extra_args=""
+provider="openrouter"
+install_name="sonar-install"
 dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +56,10 @@ while [ $# -gt 0 ]; do
     --scenarios) scenarios="$2"; shift 2 ;;
     --scenario-parallelism) scenario_parallelism="$2"; shift 2 ;;
     --theta) theta="$2"; shift 2 ;;
+    --variant) variant="$2"; shift 2 ;;
+    --extra-args) extra_args="$2"; shift 2 ;;
+    --provider) provider="$2"; shift 2 ;;
+    --install) install_name="$2"; shift 2 ;;
     --dry-run) dry_run=true; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -56,7 +73,7 @@ fi
 
 dataset="dataset/main_dataset"
 run_dir="output/benchmark/$run_name"
-install="$run_dir/sonar-install"
+install="$run_dir/$install_name"
 if [ -z "$scenarios" ]; then
   scenarios="$(ls "$dataset" | grep '^scenario-' | paste -sd, -)"
 fi
@@ -73,11 +90,12 @@ if ! $dry_run; then
 fi
 
 for model in $models; do
-  model_slug="openrouter-$(tr '/~' '__' <<< "$model")"
+  model_slug="$provider-$(tr '/~' '__' <<< "$model")"
   for spec_pct in $spec_pcts; do
     for seed in $seeds; do
       for policy in $policies; do
-        cell="$run_dir/cells/sonar-$policy/$model_slug/spec-${spec_pct}pct/seed-$seed"
+        method="sonar-$policy${variant:+-$variant}"
+        cell="$run_dir/cells/$method/$model_slug/spec-${spec_pct}pct/seed-$seed"
         finished="$(cat "$cell"/runs/*/events.jsonl 2> /dev/null \
           | grep '"type":"finished"' | grep -o '"scenario":"[^"]*"' | cut -d'"' -f4 || true)"
         pending=()
@@ -90,7 +108,7 @@ for model in $models; do
           fi
           pending+=("$scenario")
         done
-        echo "[sonar-$policy | $model | $spec_pct% | seed $seed] ${#pending[@]} to run"
+        echo "[$method | $model | $spec_pct% | seed $seed] ${#pending[@]} to run"
         if [ ${#pending[@]} -eq 0 ]; then
           continue
         fi
@@ -109,18 +127,22 @@ for model in $models; do
           --scenario-parallelism "$scenario_parallelism"
           --max-decisions 60
           --max-verifications 300
-          --name "bench-$run_name-$policy-$spec_pct-$seed"
+          --name "bench-$run_name-$policy${variant:+-$variant}-$spec_pct-$seed"
           --output "$cell"
           --scenario "$(IFS=,; echo "${pending[*]}")"
         )
+        read -r -a extra <<< "$extra_args"
+        command+=(${extra[@]+"${extra[@]}"})
         if $dry_run; then
-          printf '%q ' "${command[@]}" | cut -c1-400
+          printf "%q " "${command[@]}" | cut -c1-600
           echo
           continue
         fi
         mkdir -p "$cell"
         echo "$model" > "$cell/model"
         echo "${theta:-default}" > "$cell/theta"
+        echo "$extra_args" > "$cell/extra-args"
+        echo "$provider" > "$cell/provider"
         # A scenario that is not solved is a result, not a reason to stop the sweep
         JAVA_HOME="$(cat "$run_dir/java-home")" "${command[@]}" 2>&1 | tee -a "$cell/console.log" || true
         python3 scripts/benchmark-export.py "$run_dir"

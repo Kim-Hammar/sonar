@@ -72,6 +72,9 @@ public record RunDocument(
    * @param timeLimitSeconds the per-scenario time limit in seconds, or null
    * @param seed the seed of every random choice
    * @param koopman the Koopman-index policy's parameters, or null for the greedy policy
+   * @param uniformPrior whether the prior is uniform, or null for the informed prior
+   * @param regionAssessment whether the decision model assesses regions, or null if it does
+   * @param localization whether regions are localized by the evidence, or null if they are
    */
   public record Settings(
       int specificationPercent,
@@ -83,7 +86,10 @@ public record RunDocument(
       Map<String, Long> limits,
       Long timeLimitSeconds,
       long seed,
-      KoopmanPolicy.Parameters koopman) {
+      KoopmanPolicy.Parameters koopman,
+      Boolean uniformPrior,
+      Boolean regionAssessment,
+      Boolean localization) {
 
     /** Copies the limits. */
     public Settings {
@@ -108,7 +114,10 @@ public record RunDocument(
           limits,
           settings.timeLimit().map(Duration::toSeconds).orElse(null),
           settings.seed(),
-          settings.koopman().orElse(null));
+          settings.koopman().orElse(null),
+          settings.uniformPrior() ? Boolean.TRUE : null,
+          settings.regionAssessment() ? null : Boolean.FALSE,
+          settings.localization() ? null : Boolean.FALSE);
     }
 
     /**
@@ -129,7 +138,10 @@ public record RunDocument(
           parsed,
           Optional.ofNullable(timeLimitSeconds).map(Duration::ofSeconds),
           seed,
-          Optional.ofNullable(koopman));
+          Optional.ofNullable(koopman),
+          Boolean.TRUE.equals(uniformPrior),
+          !Boolean.FALSE.equals(regionAssessment),
+          !Boolean.FALSE.equals(localization));
     }
   }
 }
