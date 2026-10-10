@@ -4,3 +4,6 @@ any is not one of Lean's standard axioms. Add a `#print axioms` line for every t
 corresponds to a statement in the paper.
 -/
 import Sonar
+
+-- Proposition 1: existence of an optimal search policy.
+#print axioms Sonar.SearchModel.exists_optimal_policy

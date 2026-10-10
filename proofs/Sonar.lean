@@ -4,3 +4,4 @@ statement or one piece of the model; this root module imports them all, so `lake
 every proof.
 -/
 import Sonar.Basic
+import Sonar.Existence
