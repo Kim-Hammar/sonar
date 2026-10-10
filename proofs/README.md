@@ -25,6 +25,7 @@ lake build           # build the Sonar library, which checks every proof
 |---|---|---|
 | Proposition 1 (existence of an optimal search policy) | `Sonar.SearchModel.exists_optimal_policy` | `Sonar/Existence.lean` |
 | Proposition 2 (NP-hardness): correctness of the reduction from min-sum set cover | `Sonar.MinSumSetCover.Instance.extract_optimal`, `searchCost_optimal_eq` | `Sonar/Reduction.lean` |
+| Proposition 3 (a step of SONAR is `O(n)`) | `Sonar.Step.sonarStep_linear`, `sonarStep_ops_le`, `sonarStep_val` | `Sonar/Complexity.lean` |
 
 ## Coverage
 
@@ -55,3 +56,16 @@ rather than the paper's `λ > |U|`; both are polynomial in the instance, and `λ
 for every policy. Not formalized (cited): that MSSC is NP-hard [Feige, Lovász, Tetali 2004,
 Thm. 1], and that the construction and the extraction (simulating the policy for at most `n`
 steps) run in polynomial time.
+
+**Proposition 3.** Formalized: a step of SONAR, apart from invoking the agent and the verifier,
+written as programs in a cost monad (`Counted`) that counts one operation per comparison,
+arithmetic operation, logarithm, power or rounding (the unit-cost RAM model; indexing and
+control flow are free). Each program is proved to compute the paper's formula and its operations
+are bounded: one pass finds a region `x_t` of maximal belief and `b̄_t = max_{j ≠ x_t} b_t(j)`
+(rule (5), `topTwo_spec`, at most `3n` operations); rule (6) is computed exactly as stated,
+including `ln(b/0) = ∞` and the infinite threshold when `g_Φ(c_t) = 0` (`decide_val`, at most 11
+operations); and the Bayesian update returns `b_{t+1}(i) = b_t(i) L_t(i) / Z` with `L_t` as in
+Section 4.5 (`update_val`, `update_sum`, at most `7n + 3` operations). A whole step takes at most
+`10 n + 14` operations (`sonarStep_ops_le`), hence `O(n)` (`sonarStep_linear`). Inputs, as in the
+paper's proof: the agent's assessment `p_t`, `p_t(∅)` and the verification feedback `m_t`. Not
+covered: the cost of the agent and the verifier, and of regenerating the search regions.

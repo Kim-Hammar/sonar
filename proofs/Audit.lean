@@ -13,3 +13,7 @@ import Sonar
 #print axioms Sonar.MinSumSetCover.Instance.mssc_extract_le
 #print axioms Sonar.MinSumSetCover.Instance.extract_optimal
 #print axioms Sonar.MinSumSetCover.Instance.searchCost_optimal_eq
+
+-- Proposition 3: a step of SONAR takes O(n) operations and computes rules (5)-(6) and the update.
+#print axioms Sonar.Step.sonarStep_linear
+#print axioms Sonar.Step.sonarStep_val
