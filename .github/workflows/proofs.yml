@@ -1,0 +1,26 @@
+name: proofs
+
+on:
+  push:
+    paths: ["proofs/**", ".github/workflows/proofs.yml"]
+  pull_request:
+    paths: ["proofs/**", ".github/workflows/proofs.yml"]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Cache .lake
+        uses: actions/cache@v4
+        with:
+          path: proofs/.lake
+          key: lake-${{ hashFiles('proofs/lean-toolchain', 'proofs/lake-manifest.json') }}
+      - name: Check the proofs
+        run: proofs/check.sh
