@@ -138,6 +138,8 @@ def extract(cell):
                 "candidates": sum(r["bound"] for r in first_space["regions"]) if first_space else 0,
                 "ranks": adopted_ranks(records),
                 "regions_explored": regions_explored(evs),
+                "calls": [(e["question"], e["inputTokens"], e["outputTokens"])
+                          for e in evs if e["type"] == "decided"],
             }
             print(f"  {scenario}", flush=True)
     return scenarios
@@ -470,6 +472,144 @@ def effort_tex(data):
             "\\end{document}\n")
 
 
+QUESTION = {"region": "Region assessment", "hypothesis": "Candidate ranking"}
+QCOLOR = {"region": "#4a3aa7", "hypothesis": "#1baf7a"}
+QSHORT = {"region": "Regions", "hypothesis": "Candidates"}
+QTEX = {"region": "violet!80!black", "hypothesis": "teal!80!black"}
+
+
+def token_means(scen):
+    """Mean tokens per scenario: (region in, region out, ranking in, ranking out)."""
+    totals = {(q, k): 0 for q in QUESTION for k in (1, 2)}
+    for s in scen.values():
+        for call in s["calls"]:
+            totals[(call[0], 1)] += call[1]
+            totals[(call[0], 2)] += call[2]
+    return [totals[(q, k)] / len(scen) for q in QUESTION for k in (1, 2)]
+
+
+def call_tokens(scen, question):
+    return [c[1] + c[2] for s in scen.values() for c in s["calls"] if c[0] == question]
+
+
+def plot_tokens(data, out):
+    fig, axes = plt.subplots(1, 2, figsize=(8.2, 2.9), gridspec_kw={"width_ratios": [1.25, 1]})
+    ax = axes[0]
+    parts = [("region", "input"), ("region", "output"), ("hypothesis", "input"),
+             ("hypothesis", "output")]
+    for row, pct in enumerate(data):
+        left = 0.0
+        for (q, kind), value in zip(parts, token_means(data[pct])):
+            ax.barh(row, value / 1000, left=left / 1000, height=0.55, color=QCOLOR[q],
+                    alpha=1.0 if kind == "input" else 0.45, edgecolor="white", linewidth=1.5,
+                    label=f"{QSHORT[q]} ({kind})" if row == 0 else None)
+            left += value
+        ax.text(left / 1000, row, f"  {left / 1000:.0f}k", va="center", fontsize=8, color=INK)
+    ax.set_yticks(range(len(data)))
+    ax.set_yticklabels([LABEL[p] for p in data], fontsize=8)
+    ax.set_xlabel("Mean tokens per scenario (thousands)", fontsize=9, color=INK)
+    ax.set_title("(a) Token usage", fontsize=9, color=INK, loc="left")
+    ax.set_xlim(0, max(sum(token_means(sc)) for sc in data.values()) / 1000 * 1.18)
+    style(ax)
+    ax.grid(axis="y", visible=False)
+    ax.legend(fontsize=7, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=2)
+    ax = axes[1]
+    for q in QUESTION:
+        for pct, dash in zip(data, ("--", "-")):
+            xs, ys = ecdf(call_tokens(data[pct], q))
+            ax.step(xs, ys, where="post", color=QCOLOR[q], linewidth=1.8, linestyle=dash,
+                    label=f"{QSHORT[q]}, {pct}%")
+    ax.set_xscale("log")
+    ticks = [2000, 5000, 10000, 20000, 50000]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t // 1000}k" for t in ticks])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.set_xlabel("Tokens per decision-model call", fontsize=9, color=INK)
+    ax.set_ylabel("Probability", fontsize=9, color=INK)
+    ax.set_title("(b) Empirical CDF", fontsize=9, color=INK, loc="left")
+    ax.set_ylim(0, 1.02)
+    style(ax)
+    ax.legend(fontsize=7, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=2)
+    fig.tight_layout()
+    save(fig, out, "token-usage")
+
+
+def tokens_tex(data):
+    """The token-usage figure as standalone pgfplots source, in the style of the theta figure."""
+    parts = [("region", "input"), ("region", "output"), ("hypothesis", "input"),
+             ("hypothesis", "output")]
+    means = {pct: token_means(sc) for pct, sc in data.items()}
+    tables = ["% Mean tokens per scenario (thousands), per kind of decision-model question.\n"
+              "\\pgfplotstableread{\n  row regionin regionout rankin rankout\n"
+              + "".join(f"  {row} " + " ".join(f"{v / 1000:.2f}" for v in means[pct]) + "\n"
+                        for row, pct in enumerate(data))
+              + "}\\tokens\n"]
+    bars = []
+    for col, (q, kind) in zip(("regionin", "regionout", "rankin", "rankout"), parts):
+        opacity = "" if kind == "input" else ", fill opacity=0.45"
+        bars.append(f"      \\addplot[fill={QTEX[q]}, draw=white{opacity}] "
+                    f"table[x={col}, y=row] {{\\tokens}};\n"
+                    f"      \\addlegendentry{{{QSHORT[q]} ({kind})}}\n")
+    lines = []
+    for q in QUESTION:
+        for pct, dash in zip(data, ("dashed", "solid")):
+            name = f"calls{'a' if q == 'region' else 'b'}{'o' if pct == 10 else 'oo'}"
+            xs, ys = ecdf(call_tokens(data[pct], q))
+            rows = {}
+            for x, y in zip(xs, ys):
+                rows[int(x)] = y
+            tables.append(f"% {QUESTION[q]}, {pct}% specifications: empirical CDF of tokens per "
+                          "call.\n\\pgfplotstableread{\n  x p\n"
+                          + "".join(f"  {x} {y:.4f}\n" for x, y in sorted(rows.items()))
+                          + f"}}\\{name}\n")
+            lines.append(f"      \\addplot[const plot, thick, {dash}, color={QTEX[q]}] "
+                         f"table[x=x, y=p] {{\\{name}}};\n"
+                         f"      \\addlegendentry{{{QSHORT[q]}, {pct}\\%}}\n")
+    labels = ",".join(f"{{{p}\\% specifications}}" for p in data)
+    xmax = max(sum(m) for m in means.values()) / 1000 * 1.15
+    return ("\\documentclass[tikz]{standalone}\n"
+            "\\usepackage{pgfplots}\n"
+            "\\usepackage{pgfplotstable}\n"
+            "\\usepgfplotslibrary{groupplots}\n"
+            "\\pgfplotsset{compat=1.18}\n"
+            "\\begin{document}\n"
+            + "".join(tables) +
+            "\\begin{tikzpicture}\n"
+            "  \\begin{groupplot}[\n"
+            "      group style={group size=2 by 1, horizontal sep=1.8cm},\n"
+            "      height=5.0cm,\n"
+            "      tick label style={font=\\footnotesize},\n"
+            "      label style={font=\\small},\n"
+            "      title style={font=\\small},\n"
+            "    ]\n"
+            "    \\nextgroupplot[\n"
+            "        width=7.6cm,\n"
+            "        title={(a) Token usage},\n"
+            "        xbar stacked, bar width=0.5cm,\n"
+            f"        xmin=0, xmax={xmax:.1f}, ymin=-0.6, ymax={len(data) - 0.4},\n"
+            f"        ytick={{0,...,{len(data) - 1}}}, yticklabels={{{labels}}},\n"
+            "        xlabel={Mean tokens per scenario (thousands)},\n"
+            "        xmajorgrids=true, grid style={gray!25},\n"
+            "        legend style={font=\\footnotesize, draw=none, at={(0.5,-0.32)},"
+            " anchor=north, legend columns=2, cells={anchor=west}},\n"
+            "      ]\n"
+            + "".join(bars) +
+            "    \\nextgroupplot[\n"
+            "        width=6.4cm,\n"
+            "        title={(b) Empirical CDF},\n"
+            "        xmode=log, xtick={2000,5000,10000,20000,50000},"
+            " xticklabels={2k,5k,10k,20k,50k},\n"
+            "        xlabel={Tokens per decision-model call}, ylabel={Probability},\n"
+            "        ymin=0, ymax=1.02, grid=major, grid style={gray!25},\n"
+            "        legend style={font=\\footnotesize, draw=none, at={(0.5,-0.32)},"
+            " anchor=north, legend columns=2, cells={anchor=west}},\n"
+            "      ]\n"
+            + "".join(lines) +
+            "  \\end{groupplot}\n"
+            "\\end{tikzpicture}\n"
+            "\\end{document}\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=Path)
@@ -498,6 +638,9 @@ def main():
     print("wrote effort-ecdf.tex")
     (out / "search-progress.tex").write_text(progress_tex(data))
     print("wrote search-progress.tex")
+    plot_tokens(data, out)
+    (out / "token-usage.tex").write_text(tokens_tex(data))
+    print("wrote token-usage.tex")
 
 
 if __name__ == "__main__":

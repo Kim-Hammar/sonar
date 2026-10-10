@@ -98,6 +98,16 @@ final class TraceJson {
         detail.set("evidence", evidence(adopted.verification().evidence(), null));
       }
       case TraceEvent.Finished finished -> finished(finished.result(), summary, detail);
+      case TraceEvent.Timings timings -> {
+        ObjectNode phases = summary.putObject("nanos");
+        timings
+            .nanos()
+            .forEach(
+                (phase, durations) -> {
+                  ArrayNode list = phases.putArray(phase);
+                  durations.forEach(list::add);
+                });
+      }
       case TraceEvent.Failed failed -> {
         summary.put("reason", failed.reason());
         detail.put("reason", failed.reason());
@@ -116,6 +126,7 @@ final class TraceJson {
       case TraceEvent.Rejected _ -> "rejected";
       case TraceEvent.Adopted _ -> "adopted";
       case TraceEvent.Finished _ -> "finished";
+      case TraceEvent.Timings _ -> "timings";
       case TraceEvent.Failed _ -> "failed";
     };
   }

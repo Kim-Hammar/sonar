@@ -1,6 +1,9 @@
 package se.kth.sonar.trace;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import se.kth.sonar.common.Distribution;
@@ -136,6 +139,21 @@ public sealed interface TraceEvent {
     /** Checks the result. */
     public Finished {
       Objects.requireNonNull(result, "result");
+    }
+  }
+
+  /**
+   * The time each phase of the repair took, per operation, recorded when the repair ends.
+   *
+   * @param nanos per phase (verification, adoption, search-space, prior, policy, candidates,
+   *     decision-problem, decision-model, belief), the duration of each operation in nanoseconds
+   */
+  record Timings(Map<String, List<Long>> nanos) implements TraceEvent {
+    /** Copies the durations. */
+    public Timings {
+      Map<String, List<Long>> copy = new LinkedHashMap<>();
+      nanos.forEach((phase, durations) -> copy.put(phase, List.copyOf(durations)));
+      nanos = Collections.unmodifiableMap(copy);
     }
   }
 

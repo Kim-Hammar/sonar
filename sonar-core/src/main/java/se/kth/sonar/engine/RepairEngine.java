@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import se.kth.sonar.belief.BeliefModel;
 import se.kth.sonar.belief.BeliefState;
 import se.kth.sonar.common.ContentHash;
@@ -119,6 +120,7 @@ public final class RepairEngine implements Repairer {
     private final Map<ProgramObject.Ref, Integer> nearMisses = new HashMap<>();
     private final List<Hypothesis> inert = new ArrayList<>();
     private final Set<ContentHash> verifierRejected = new LinkedHashSet<>();
+    private final Map<String, List<Long>> timings = new LinkedHashMap<>();
     private Epoch epoch;
     private BeliefState belief;
 
@@ -129,21 +131,34 @@ public final class RepairEngine implements Repairer {
       this.epochs = components.epochs().with(new ExperienceFactor(ledger));
     }
 
+    /** Runs {@code body}, recording its duration as one operation of {@code phase}. */
+    private <T> T timed(String phase, Supplier<T> body) {
+      long start = System.nanoTime();
+      try {
+        return body.get();
+      } finally {
+        timings.computeIfAbsent(phase, p -> new ArrayList<>()).add(System.nanoTime() - start);
+      }
+    }
+
     RepairResult execute() {
       if (!affordable(problem.initial())) {
         return failed("the budget allows no verification");
       }
       Verification baseline = verify(problem.initial());
       TraceSink.emit(new TraceEvent.Baseline(baseline));
-      epoch = epochs.initial(problem, baseline);
-      belief = components.beliefs().initial(epochs.prior(epoch), epoch.state().epoch());
+      epoch = timed("search-space", () -> epochs.initial(problem, baseline));
+      Distribution<Region.Id> prior = timed("prior", () -> epochs.prior(epoch));
+      belief = timed("belief", () -> components.beliefs().initial(prior, epoch.state().epoch()));
       emitSpace();
       while (true) {
         if (cancellation.isCancelled()) {
           return result(new RepairResult.Stop.Cancelled());
         }
         SearchPolicy.Action action =
-            components.policy().next(epoch.state(), epoch.space(), belief, budget);
+            timed(
+                "policy",
+                () -> components.policy().next(epoch.state(), epoch.space(), belief, budget));
         Optional<RepairResult.Stop> stop =
             switch (action) {
               case SearchPolicy.Action.Stop s -> Optional.of(s.reason());
@@ -160,24 +175,33 @@ public final class RepairEngine implements Repairer {
 
     private Optional<RepairResult.Stop> assess(Partition partition) {
       DecisionProblem.RegionChoice question =
-          components
-              .problems()
-              .regionChoice(epoch.state(), epoch.space(), partition, ledger.triedIn(now()));
-      DecisionOutcome<RegionAssessment> outcome = components.decisions().assess(question);
+          timed(
+              "decision-problem",
+              () ->
+                  components
+                      .problems()
+                      .regionChoice(
+                          epoch.state(), epoch.space(), partition, ledger.triedIn(now())));
+      DecisionOutcome<RegionAssessment> outcome =
+          timed("decision-model", () -> components.decisions().assess(question));
       TraceSink.emit(new TraceEvent.Decided(question, outcome));
       belief =
-          switch (outcome) {
-            case DecisionOutcome.Answered<RegionAssessment> answered ->
-                components.beliefs().afterAssessment(belief, partition, answered.answer());
-            default -> components.beliefs().afterNeutralAssessment(belief, partition);
-          };
+          timed(
+              "belief",
+              () ->
+                  switch (outcome) {
+                    case DecisionOutcome.Answered<RegionAssessment> answered ->
+                        components.beliefs().afterAssessment(belief, partition, answered.answer());
+                    default -> components.beliefs().afterNeutralAssessment(belief, partition);
+                  });
       return Optional.empty();
     }
 
     private Optional<RepairResult.Stop> expand(Region.Id id) {
-      epoch = epochs.expand(epoch, id);
+      epoch = timed("candidates", () -> epochs.expand(epoch, id));
       if (epoch.space().region(id).isPresent()) {
-        belief = belief.withPrior(epochs.prior(epoch));
+        Distribution<Region.Id> prior = timed("prior", () -> epochs.prior(epoch));
+        belief = timed("belief", () -> belief.withPrior(prior));
       } else {
         forget(id);
       }
@@ -188,8 +212,14 @@ public final class RepairEngine implements Repairer {
       Region region = epoch.space().region(id).orElseThrow();
       Region.Hypotheses.Admitted admitted = (Region.Hypotheses.Admitted) region.hypotheses();
       DecisionProblem.HypothesisChoice question =
-          components.problems().hypothesisChoice(epoch.state(), region, ledger.triedIn(now()));
-      DecisionOutcome<HypothesisRanking> outcome = components.decisions().rank(question);
+          timed(
+              "decision-problem",
+              () ->
+                  components
+                      .problems()
+                      .hypothesisChoice(epoch.state(), region, ledger.triedIn(now())));
+      DecisionOutcome<HypothesisRanking> outcome =
+          timed("decision-model", () -> components.decisions().rank(question));
       TraceSink.emit(new TraceEvent.Decided(question, outcome));
       Distribution<ContentHash> probabilities =
           outcome instanceof DecisionOutcome.Answered<HypothesisRanking> answered
@@ -241,7 +271,8 @@ public final class RepairEngine implements Repairer {
       completeSetAside(region, admitted, improvements, mixedImprovements, tested);
       if (improvements.isEmpty()) {
         for (Adoption.Verified mixed : mixedImprovements) {
-          Optional<Adoption.Verified> part = components.adoption().part(epoch.state(), mixed);
+          Optional<Adoption.Verified> part =
+              timed("adoption", () -> components.adoption().part(epoch.state(), mixed));
           if (part.isPresent()) {
             improvements.add(part.get());
             break;
@@ -251,7 +282,9 @@ public final class RepairEngine implements Repairer {
       Optional<Adoption.Adopted> adoption =
           improvements.isEmpty()
               ? Optional.empty()
-              : components.adoption().adopt(epoch.state(), improvements, inert);
+              : timed(
+                  "adoption",
+                  () -> components.adoption().adopt(epoch.state(), improvements, inert));
       if (adoption.isPresent()) {
         if (!adoption.get().verification().verdict().solved()) {
           int beforeReplacement = now();
@@ -273,10 +306,11 @@ public final class RepairEngine implements Repairer {
               .ranking()
               .map(ranking -> ranking.mass(tested))
               .orElse((double) tested.size() / admitted.bound());
-      belief = components.beliefs().afterFailures(belief, id, testedMass);
+      belief = timed("belief", () -> components.beliefs().afterFailures(belief, id, testedMass));
       tested.addAll(known);
       trim(region, admitted.without(tested));
-      belief = components.beliefs().withNearMisses(belief, nearMissesByRegion());
+      belief =
+          timed("belief", () -> components.beliefs().withNearMisses(belief, nearMissesByRegion()));
       return Optional.empty();
     }
 
@@ -290,7 +324,9 @@ public final class RepairEngine implements Repairer {
         Set<ContentHash> tested) {
       Region.Id id = region.id();
       List<VerificationService.Attempt> attempts =
-          components.verifier().attemptAll(snapshots, problem.specifications());
+          timed(
+              "verification",
+              () -> components.verifier().attemptAll(snapshots, problem.specifications()));
       for (int at = 0; at < batch.size(); at++) {
         Hypothesis hypothesis = batch.get(at);
         VerificationService.Attempt attempt = attempts.get(at);
@@ -337,7 +373,8 @@ public final class RepairEngine implements Repairer {
         List<Adoption.Verified> mixedImprovements,
         Set<ContentHash> tested) {
       Optional<Adoption.Verified> setAside =
-          components.adoption().setAside(epoch.state(), improvements, inert);
+          timed(
+              "adoption", () -> components.adoption().setAside(epoch.state(), improvements, inert));
       if (setAside.isEmpty()) {
         return;
       }
@@ -415,14 +452,15 @@ public final class RepairEngine implements Repairer {
 
     private void advance(
         List<Hypothesis> hypotheses, Snapshot snapshot, Verification verification) {
-      epoch = epochs.advance(epoch, snapshot, verification);
+      epoch = timed("search-space", () -> epochs.advance(epoch, snapshot, verification));
       TraceSink.emit(new TraceEvent.Adopted(now(), hypotheses, verification));
       nearMisses.clear();
       inert.clear();
       if (epoch.state().solved()) {
         return;
       }
-      belief = components.beliefs().initial(epochs.prior(epoch), now());
+      Distribution<Region.Id> prior = timed("prior", () -> epochs.prior(epoch));
+      belief = timed("belief", () -> components.beliefs().initial(prior, now()));
       emitSpace();
     }
 
@@ -503,10 +541,12 @@ public final class RepairEngine implements Repairer {
     }
 
     private Verification verify(Snapshot snapshot) {
-      return components.verifier().verify(snapshot, problem.specifications());
+      return timed(
+          "verification", () -> components.verifier().verify(snapshot, problem.specifications()));
     }
 
     private RepairResult result(RepairResult.Stop stop) {
+      TraceSink.emit(new TraceEvent.Timings(timings));
       return new RepairResult(
           problem.name(),
           epoch.state().snapshot(),
@@ -517,6 +557,7 @@ public final class RepairEngine implements Repairer {
     }
 
     private RepairResult failed(String reason) {
+      TraceSink.emit(new TraceEvent.Timings(timings));
       return new RepairResult(
           problem.name(),
           problem.initial(),
