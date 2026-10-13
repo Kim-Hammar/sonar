@@ -34,10 +34,9 @@ class ThetaEstimateTest {
   }
 
   @Test
-  void matchesTheClosedFormAndItsSearchFunction() {
+  void matchesTheClosedForm() {
     ThetaEstimate estimate = ThetaEstimate.of(List.of(1, 2, 3), 1);
     assertThat(estimate.theta()).isCloseTo(Math.log(2), within(1e-12));
-    assertThat(estimate.q(1)).isCloseTo(0.5, within(1e-12));
   }
 
   @Test

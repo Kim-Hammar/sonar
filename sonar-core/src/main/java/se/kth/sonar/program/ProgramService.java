@@ -176,11 +176,6 @@ public final class ProgramService {
         && earlier.snapshot().text(router).digest().equals(snapshot.text(router).digest());
   }
 
-  /** Returns the statements of {@code router}'s configuration in {@code snapshot}. */
-  public List<Statement> parse(RouterId router, Snapshot snapshot) {
-    return routerModel(router, snapshot).statements();
-  }
-
   private RouterModel routerModel(RouterId router, Snapshot snapshot) {
     ContentHash key =
         ContentHash.builder().add(router.name()).add(snapshot.text(router).digest()).build();

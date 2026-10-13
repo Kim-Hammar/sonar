@@ -91,6 +91,10 @@ public final class CounterexampleFactor implements PriorFactor {
     return "counterexample";
   }
 
+  /**
+   * {@inheritDoc} The address-identity reduction runs from every interface to the origins of
+   * missing routes, so it applies only when there are such origins.
+   */
   @Override
   public double weight(Region region, RepairState state) {
     Evidence evidence = observations.get(state.verification().digest(), () -> observations(state));
@@ -132,8 +136,6 @@ public final class CounterexampleFactor implements PriorFactor {
         count = Math.max(count, evidence.forbiddenOrigins().getOrDefault(role, 0));
       }
       if (count > 0) {
-        // The reduction is from every interface to the origins of missing routes; a count that
-        // comes only from boundary or forbidden origins has no such origins to reduce to.
         double reduction =
             relation.instance().relation().equals("address-identity")
                     && !evidence.noRouteOrigins().isEmpty()

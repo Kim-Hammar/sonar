@@ -79,19 +79,9 @@ public final class Grammar {
     return commentMarker;
   }
 
-  /** Returns the sorts in declaration order. */
-  public Collection<ValueSort> sorts() {
-    return sorts.values();
-  }
-
   /** Returns the sort named {@code name}. */
   public Optional<ValueSort> sort(String name) {
     return Optional.ofNullable(sorts.get(name));
-  }
-
-  /** Returns the contexts in declaration order. */
-  public Collection<Context> contexts() {
-    return contexts.values();
   }
 
   /** Returns the context named {@code name}. */

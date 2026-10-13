@@ -30,9 +30,7 @@ import se.kth.sonar.app.RunStatus;
 import se.kth.sonar.app.RunStore;
 import se.kth.sonar.app.Versions;
 import se.kth.sonar.app.Workspace;
-import se.kth.sonar.app.theta.ThetaFigure;
 import se.kth.sonar.app.theta.ThetaReport;
-import se.kth.sonar.common.NotImplemented;
 import se.kth.sonar.engine.BenchmarkRunner;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.Cancellation;
@@ -49,7 +47,6 @@ import se.kth.sonar.web.WebServer;
     description = "SONAR: Search-Optimal Network Agentic Repair.",
     subcommands = {SonarCli.Repair.class, SonarCli.Serve.class, SonarCli.Theta.class})
 public final class SonarCli implements Runnable {
-  static final int NOT_IMPLEMENTED = 3;
   static final String DATASET = "dataset/main_dataset";
   static final String OUTPUT = "output";
 
@@ -69,22 +66,12 @@ public final class SonarCli implements Runnable {
     CommandLine commandLine = new CommandLine(new SonarCli());
     commandLine.setOut(out);
     commandLine.setErr(err);
-    commandLine.setExecutionExceptionHandler(SonarCli::handle);
     return commandLine.execute(args);
   }
 
   @Override
   public void run() {
     spec.commandLine().usage(spec.commandLine().getOut());
-  }
-
-  private static int handle(Exception error, CommandLine command, CommandLine.ParseResult parsed)
-      throws Exception {
-    if (error instanceof NotImplemented missing) {
-      command.getErr().println("sonar: " + missing.getMessage());
-      return NOT_IMPLEMENTED;
-    }
-    throw error;
   }
 
   /** Prints the versions of sonar, the embedded Batfish, and the Java runtime. */
@@ -176,7 +163,7 @@ public final class SonarCli implements Runnable {
     }
   }
 
-  /** Estimates each decision model's θ from recorded runs and writes the comparison figure. */
+  /** Estimates each decision model's θ from recorded runs. */
   @Command(
       name = "theta",
       mixinStandardHelpOptions = true,
@@ -197,7 +184,7 @@ public final class SonarCli implements Runnable {
         names = "--output",
         required = true,
         paramLabel = "DIR",
-        description = "Where to write theta.json, observations.csv and theta.tex.")
+        description = "Where to write theta.json and observations.csv.")
     private Path output;
 
     @Option(
@@ -212,7 +199,7 @@ public final class SonarCli implements Runnable {
     @Override
     public Integer call() throws IOException {
       PrintWriter out = spec.commandLine().getOut();
-      List<ThetaFigure.Series> series;
+      List<ThetaReport.Series> series;
       try {
         series = ThetaReport.write(runs, output, seed);
       } catch (IllegalArgumentException e) {
@@ -229,7 +216,7 @@ public final class SonarCli implements Runnable {
           "episodes",
           "censored",
           "incomplete");
-      for (ThetaFigure.Series one : series) {
+      for (ThetaReport.Series one : series) {
         out.printf(
             Locale.ROOT,
             "%-24s %8.3f %8.3f %8.3f %9d %9d %10d%n",
@@ -241,7 +228,7 @@ public final class SonarCli implements Runnable {
             one.observations().censored(),
             one.observations().incomplete());
       }
-      out.println("wrote theta.json, observations.csv and theta.tex to " + output);
+      out.println("wrote theta.json and observations.csv to " + output);
       return 0;
     }
   }

@@ -84,7 +84,10 @@ public final class FrontierFactor implements PriorFactor {
     return weight;
   }
 
-  /** Counts the no-route observations reaching every object in a frontier link's program slice. */
+  /**
+   * Counts the no-route observations reaching every object in a frontier link's program slice. A
+   * session is one cause however many destinations stop at it, so it is observed once.
+   */
   private static Evidence frontiers(RepairState state) {
     RouterEvidence owners = RouterEvidence.of(state);
     DataPlaneEvidence evidence = state.verification().evidence();
@@ -126,7 +129,6 @@ public final class FrontierFactor implements PriorFactor {
       }
       observedSessions.addAll(owners.sessionFrontier(predicate.source(), predicate.destination()));
     }
-    // A session is one cause however many destinations stop at it, so it is observed once
     for (RouterEvidence.Link link : observedSessions) {
       for (ProgramObject.Ref object : CounterexampleFactor.boundarySites(state.program(), link)) {
         sessionCounts.merge(object, 1, Integer::sum);
@@ -159,14 +161,15 @@ public final class FrontierFactor implements PriorFactor {
     return Set.copyOf(result);
   }
 
-  /** Adds the existing objects named by the reference attributes of {@code object}. */
+  /**
+   * Adds the existing objects named by the reference attributes of {@code object}, except its
+   * implicit reference to its owning router: that is containment, not a data-plane dependency, and
+   * would make every edit on either endpoint router look as precise as an edit to the endpoint.
+   */
   private static void addReferences(
       RepairState state, ProgramObject object, Set<ProgramObject.Ref> result) {
     var type = state.program().schema().object(object.ref().type()).orElseThrow();
     for (Map.Entry<String, List<String>> entry : object.attributes().entrySet()) {
-      // Every object has an implicit reference to its owning router. That is containment, not a
-      // data-plane dependency: attributing a link frontier to it would make every edit anywhere on
-      // either endpoint router look as precise as an edit to the endpoint itself.
       if (entry.getKey().equals("router")) {
         continue;
       }

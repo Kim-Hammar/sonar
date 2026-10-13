@@ -1311,9 +1311,12 @@ class FactorsTest {
         new Region.Hypotheses.Deferred(1));
   }
 
+  /**
+   * r3 peers with r1, r2 and r4 in the same way; r2 and r4 hold the route and r1 does not. The one
+   * frontier session among the three gives a reduction of 3 and odds of 3.
+   */
   @Test
   void aSessionToAPeerHoldingTheRouteIsAFrontierWithoutAPhysicalLink() {
-    // r3 peers with r1, r2 and r4 in the same way; r2 and r4 hold the route and r1 does not
     RepairState routeless = sessionState(Set.of(R2, R3, R4), 3);
     Prefix destination = SESSION_DESTINATION;
     Specification missing = routeless.verification().verdict().unresolved().getFirst();
@@ -1335,22 +1338,21 @@ class FactorsTest {
     assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, destination))
         .containsExactly(RouterEvidence.Link.of(R1, R3));
     assertThat(RouterEvidence.of(routeless).routers(missing)).contains(R3);
-    // One frontier session among the three: reduction 3, odds 3
     assertThat(new FrontierFactor().weight(session, routeless)).isCloseTo(9, within(1e-12));
     assertThat(new FrontierFactor().weight(beyond, routeless)).isEqualTo(1);
   }
 
+  /** r3 holds the route but passes it to none of its peers: the cause is what they share. */
   @Test
   void aHolderThatFailsEverySessionOfAKindIsNoSessionFrontier() {
-    // r3 holds the route but passes it to none of its peers: the cause is what they share
     RepairState routeless = sessionState(Set.of(R3), 3);
 
     assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, SESSION_DESTINATION)).isEmpty();
   }
 
+  /** r1 peers with r3 and r4, which both hold the route: the cause is on r1. */
   @Test
   void aSourceThatTakesTheRouteFromNoneOfSeveralHoldersIsNoSessionFrontier() {
-    // r1 peers with r3 and r4, which both hold the route: the cause is on r1
     RepairState routeless = sessionState(Set.of(R2, R3, R4), 1);
 
     assertThat(RouterEvidence.of(routeless).sessionFrontier(R1, SESSION_DESTINATION)).isEmpty();
@@ -1791,6 +1793,7 @@ class FactorsTest {
     assertThat(new CounterexampleFactor().weight(exact, missing)).isGreaterThan(3);
   }
 
+  /** With no missing route, there is no set of origins to reduce the interfaces to. */
   @Test
   void aForbiddenOriginWeighsAHostIdentityWithoutMissingRoutes() {
     Prefix destination = Prefix.parse("10.0.0.1/32");
@@ -1844,7 +1847,6 @@ class FactorsTest {
             Map.of(),
             new Region.Hypotheses.Deferred(2));
 
-    // No missing route, so there is no set of origins to reduce the interfaces to
     assertThat(new CounterexampleFactor().weight(region, delivered)).isCloseTo(3, within(1e-12));
   }
 

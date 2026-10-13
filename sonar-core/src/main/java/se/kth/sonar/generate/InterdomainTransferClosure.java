@@ -53,12 +53,8 @@ public final class InterdomainTransferClosure {
       for (Hypothesis blocker : blockers) {
         List<EditOperator> operators = new ArrayList<>(policy.operators());
         operators.addAll(blocker.operators());
-        try {
-          Hypothesis combined = Hypothesis.of(program.snapshot(), operators);
-          result.putIfAbsent(combined.id(), combined);
-        } catch (IllegalArgumentException | IllegalStateException incompatible) {
-          // Another policy/filter pair may still form a valid transaction.
-        }
+        combined(program, operators)
+            .ifPresent(combined -> result.putIfAbsent(combined.id(), combined));
       }
     }
     return List.copyOf(result.values());

@@ -54,11 +54,6 @@ public record ThetaEstimate(double theta, double low, double high, int episodes)
         values.length);
   }
 
-  /** Returns {@code q(r, θ)} for this estimate. */
-  public double q(double r) {
-    return 1 - Math.exp(-theta * r);
-  }
-
   private static double mle(int[] ranks) {
     long sum = 0;
     for (int rank : ranks) {

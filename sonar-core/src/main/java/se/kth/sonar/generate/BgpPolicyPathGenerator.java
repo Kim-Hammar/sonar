@@ -101,13 +101,9 @@ public final class BgpPolicyPathGenerator {
         operators.addAll(inbound.prerequisites());
         operators.addAll(attach(program, sender, export.routeMap(), "out", provenance));
         operators.addAll(attach(program, receiver, inbound.routeMap(), "in", provenance));
-        try {
-          if (!operators.isEmpty()) {
-            Hypothesis hypothesis = Hypothesis.of(program.snapshot(), operators);
-            unique.putIfAbsent(hypothesis.id(), hypothesis);
-          }
-        } catch (IllegalArgumentException | IllegalStateException invalid) {
-          // Another pair may still be a valid typed transaction.
+        if (!operators.isEmpty()) {
+          combined(program, operators)
+              .ifPresent(hypothesis -> unique.putIfAbsent(hypothesis.id(), hypothesis));
         }
       }
     }
@@ -277,5 +273,14 @@ public final class BgpPolicyPathGenerator {
         .map(ProgramObject.Ref::parse)
         .map(ProgramObject.Ref::router)
         .orElse(null);
+  }
+
+  /** Returns the candidate made of {@code operators}, unless they do not form one transaction. */
+  private static Optional<Hypothesis> combined(ProgramModel program, List<EditOperator> operators) {
+    try {
+      return Optional.of(Hypothesis.of(program.snapshot(), operators));
+    } catch (IllegalArgumentException | IllegalStateException invalid) {
+      return Optional.empty();
+    }
   }
 }

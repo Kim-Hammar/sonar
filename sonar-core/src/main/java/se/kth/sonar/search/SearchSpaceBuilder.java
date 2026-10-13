@@ -364,7 +364,9 @@ public final class SearchSpaceBuilder {
   /**
    * Returns {@code region} with its admitted candidates. An edit that several analyses derive is
    * one candidate, with the strongest support any of them gives it: a larger candidate that
-   * contains the edit is then never better supported than the edit alone.
+   * contains the edit is then never better supported than the edit alone. A link is one object, so
+   * its complete, evidence-supported profile is generated before the generic closure enumerates
+   * individually valid but unrelated IGP coverage.
    */
   public Region expand(Region region, RepairState state) {
     List<Hypothesis> generated =
@@ -438,8 +440,6 @@ public final class SearchSpaceBuilder {
                 }
                 List<Hypothesis> all = new ArrayList<>();
                 if (relation.instance().relation().equals("link")) {
-                  // A link is one object: preserve its complete, evidence-supported profile before
-                  // the generic closure enumerates individually valid but unrelated IGP coverage.
                   all.addAll(LinkProfileGenerator.generate(state.program(), relation.instance()));
                 }
                 all.addAll(

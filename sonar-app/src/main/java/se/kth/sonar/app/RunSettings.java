@@ -77,29 +77,6 @@ public record RunSettings(
     }
   }
 
-  /** Creates settings with the informed prior. */
-  public RunSettings(
-      int specificationPercent,
-      int verificationBatch,
-      ParallelismConfig parallelism,
-      Map<Budget.Resource, Long> limits,
-      Optional<Duration> timeLimit,
-      long seed,
-      Optional<KoopmanPolicy.Parameters> koopman) {
-    this(
-        specificationPercent,
-        verificationBatch,
-        parallelism,
-        limits,
-        timeLimit,
-        seed,
-        koopman,
-        false,
-        true,
-        true,
-        1);
-  }
-
   /** Creates settings for the greedy policy. */
   public RunSettings(
       int specificationPercent,
@@ -115,7 +92,11 @@ public record RunSettings(
         limits,
         timeLimit,
         seed,
-        Optional.empty());
+        Optional.empty(),
+        false,
+        true,
+        true,
+        1);
   }
 
   /** Returns the search policy these settings choose. */

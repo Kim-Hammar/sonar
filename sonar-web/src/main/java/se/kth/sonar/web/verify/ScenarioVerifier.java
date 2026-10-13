@@ -4,7 +4,6 @@ import java.lang.System.Logger.Level;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -254,16 +253,6 @@ public final class ScenarioVerifier implements AutoCloseable {
         }
         settled.await();
       }
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  /** Returns every kept verification, least recently read first. */
-  public List<Job> jobs() {
-    lock.lock();
-    try {
-      return new ArrayList<>(jobs.values());
     } finally {
       lock.unlock();
     }

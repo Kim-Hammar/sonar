@@ -8,7 +8,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
-import se.kth.sonar.common.NotImplemented;
 import se.kth.sonar.execution.Budget;
 import se.kth.sonar.execution.Cancellation;
 import se.kth.sonar.execution.ExecutionContext;
@@ -82,7 +81,7 @@ class BenchmarkRunnerTest {
     Repairer repairer =
         problem -> {
           if (problem.name().equals("s2")) {
-            throw new NotImplemented("RepairEngine.repair");
+            throw new IllegalStateException("the repair of s2 failed");
           }
           return solved(problem);
         };
@@ -103,9 +102,7 @@ class BenchmarkRunnerTest {
                   record -> {});
       assertThat(outcomes.get(0)).isInstanceOf(BenchmarkRunner.Outcome.Completed.class);
       assertThat(outcomes.get(1))
-          .isEqualTo(
-              new BenchmarkRunner.Outcome.Failed(
-                  "s2", "RepairEngine.repair is not implemented yet"));
+          .isEqualTo(new BenchmarkRunner.Outcome.Failed("s2", "the repair of s2 failed"));
       assertThat(outcomes.get(2))
           .isEqualTo(new BenchmarkRunner.Outcome.Failed("s3", "no scenario s3"));
       assertThat(outcomes.get(3)).isInstanceOf(BenchmarkRunner.Outcome.Completed.class);
@@ -119,7 +116,7 @@ class BenchmarkRunnerTest {
         problem -> {
           RunScope.current().orElseThrow().budget().charge(Budget.Resource.VERIFICATIONS, 3);
           if (problem.name().equals("s2")) {
-            throw new NotImplemented("RepairEngine.repair");
+            throw new IllegalStateException("the repair of s2 failed");
           }
           return solved(problem);
         };

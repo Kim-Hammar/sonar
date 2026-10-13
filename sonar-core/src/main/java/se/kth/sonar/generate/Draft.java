@@ -83,11 +83,6 @@ public final class Draft {
     return new Draft(programs, base, model, List.copyOf(extended));
   }
 
-  /** Returns the program the draft started from. */
-  public ProgramModel base() {
-    return base;
-  }
-
   /** Returns the program the operators produce. */
   public ProgramModel program() {
     return program;

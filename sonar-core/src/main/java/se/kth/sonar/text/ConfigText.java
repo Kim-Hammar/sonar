@@ -66,11 +66,6 @@ public final class ConfigText {
     return lines.size();
   }
 
-  /** Returns whether the text ends with a line break. */
-  public boolean trailingNewline() {
-    return trailingNewline;
-  }
-
   /** Returns the SHA-256 digest of the text. */
   public ContentHash digest() {
     return digest;

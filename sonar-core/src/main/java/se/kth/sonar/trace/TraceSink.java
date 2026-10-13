@@ -17,11 +17,6 @@ public interface TraceSink {
   /** Receives one record. */
   void accept(TraceRecord record);
 
-  /** Returns a sink that ignores every record. */
-  static TraceSink discard() {
-    return record -> {};
-  }
-
   /**
    * Sends {@code event} to the sink bound to the current thread, if any, stamped with the scenario
    * and budget usage of the current {@link RunScope} and the current time.

@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import se.kth.sonar.common.ContentHash;
 import se.kth.sonar.grammar.Statement;
@@ -118,12 +119,8 @@ public final class ProtocolTransferGenerator {
     for (Hypothesis prerequisite : prerequisites) {
       List<EditOperator> operators = new ArrayList<>(prerequisite.operators());
       operators.addAll(attachment);
-      try {
-        Hypothesis hypothesis = Hypothesis.of(program.snapshot(), operators);
-        unique.putIfAbsent(hypothesis.id(), hypothesis);
-      } catch (IllegalArgumentException | IllegalStateException invalid) {
-        // Another exact dependency closure may still be valid.
-      }
+      combined(program, operators)
+          .ifPresent(hypothesis -> unique.putIfAbsent(hypothesis.id(), hypothesis));
     }
   }
 
@@ -210,5 +207,14 @@ public final class ProtocolTransferGenerator {
       }
     }
     return null;
+  }
+
+  /** Returns the candidate made of {@code operators}, unless they do not form one transaction. */
+  private static Optional<Hypothesis> combined(ProgramModel program, List<EditOperator> operators) {
+    try {
+      return Optional.of(Hypothesis.of(program.snapshot(), operators));
+    } catch (IllegalArgumentException | IllegalStateException invalid) {
+      return Optional.empty();
+    }
   }
 }

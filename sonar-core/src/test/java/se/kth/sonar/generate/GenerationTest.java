@@ -2512,6 +2512,9 @@ class GenerationTest {
     return (text.length() - text.replace(needle, "").length()) / needle.length();
   }
 
+  /**
+   * Without a waypoint, the one required host address that no interface owns is the displaced one.
+   */
   @Test
   void aCollidingLoopbackRenameSplitsDuplicatedSessionUsesAtomically() {
     String first =
@@ -2746,7 +2749,6 @@ class GenerationTest {
             IdentityRefactoring.verificationSeeds(
                 colliding.program(), transitVerification, firstLoopback))
         .isEmpty();
-    // Without a waypoint, the one required host address nobody owns is the one displaced
     Specification unownedHost =
         new Specification(
             new ForwardingPredicate.Reachability(three, Prefix.parse("10.0.0.2/32")),

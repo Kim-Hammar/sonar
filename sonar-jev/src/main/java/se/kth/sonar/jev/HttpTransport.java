@@ -44,11 +44,6 @@ public final class HttpTransport implements DecisionTransport {
       Objects.requireNonNull(api, "api");
     }
 
-    /** Creates settings for an endpoint that speaks Jev's decision protocol. */
-    public Settings(URI endpoint, String model, String apiKeyVariable, Duration timeout) {
-      this(endpoint, model, apiKeyVariable, timeout, Api.DECISIONS);
-    }
-
     /** Returns the transport these settings describe. */
     public DecisionTransport transport() {
       HttpTransport http = new HttpTransport(this);
@@ -64,7 +59,8 @@ public final class HttpTransport implements DecisionTransport {
           URI.create("https://openrouter.ai/api/alpha/decisions"),
           "~typesafe/jev-latest",
           "OPENROUTER_API_KEY",
-          Duration.ofSeconds(45));
+          Duration.ofSeconds(45),
+          Api.DECISIONS);
     }
   }
 

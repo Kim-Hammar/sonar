@@ -93,19 +93,6 @@ public final class ObjectBinder {
     }
   }
 
-  /** Returns the objects defined by the statements of every router. */
-  public Bound bind(Map<RouterId, List<Statement>> statements) {
-    List<ProgramObject> objects = new ArrayList<>();
-    List<SourceSpan> dangling = new ArrayList<>();
-    statements.forEach(
-        (router, list) -> {
-          Bound bound = bind(router, list);
-          objects.addAll(bound.objects());
-          dangling.addAll(bound.dangling());
-        });
-    return new Bound(objects, dangling);
-  }
-
   /** Returns the objects defined by the statements of one router, the router's own object first. */
   public Bound bind(RouterId router, List<Statement> statements) {
     List<ProgramObject> objects = new ArrayList<>();

@@ -357,7 +357,8 @@ public final class IdentityRefactoring {
 
   /**
    * Returns the unique /32 destination that unresolved obligations require delivered to and that no
-   * interface owns, whatever the predicate.
+   * interface owns, whatever the predicate. A waypoint specification decides alone: it names the
+   * owner, or that a router is not it.
    */
   private static Optional<String> uniqueUnownedHostDestination(
       ProgramModel program, Verification verification) {
@@ -378,7 +379,6 @@ public final class IdentityRefactoring {
         continue;
       }
       if (specification.predicate() instanceof ForwardingPredicate.Waypointing) {
-        // A waypoint names the owner, or that a router is not it; that evidence decides alone
         return Optional.empty();
       }
       required.add(address);

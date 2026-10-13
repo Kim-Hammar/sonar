@@ -13,3 +13,4 @@ coverage/
 /dataset/
 /output/
 .env
+__pycache__/

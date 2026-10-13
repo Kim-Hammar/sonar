@@ -30,11 +30,6 @@ abstract class BestRegionPolicy implements SearchPolicy {
 
   private final boolean assessing;
 
-  /** Creates a policy that asks the decision model to assess regions. */
-  BestRegionPolicy() {
-    this(true);
-  }
-
   /** Creates a policy that asks the decision model to assess regions if {@code assessing}. */
   BestRegionPolicy(boolean assessing) {
     this.assessing = assessing;

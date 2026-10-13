@@ -18,9 +18,4 @@ public record RegionAssessment(Distribution<Region.Id> regions, double none) {
       throw new IllegalArgumentException("none must lie in [0, 1]: " + none);
     }
   }
-
-  /** Returns the odds that some region of the partition holds a repair. */
-  public double oddsAgainstNone() {
-    return none == 0 ? Double.POSITIVE_INFINITY : (1 - none) / none;
-  }
 }

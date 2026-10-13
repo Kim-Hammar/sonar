@@ -12,11 +12,19 @@ import se.kth.sonar.app.Json;
 
 /**
  * Estimates θ for several decision models from their recorded runs and writes {@code theta.json}
- * with each model's estimate and counts, {@code observations.csv} with every observed rank, and
- * {@code theta.tex} with the comparison figure.
+ * with each model's estimate and counts and {@code observations.csv} with every observed rank.
  */
 public final class ThetaReport {
   private ThetaReport() {}
+
+  /**
+   * One model's observed ranks and its estimate of θ.
+   *
+   * @param model the model's display name
+   * @param observations the observed ranks of the first valid repair
+   * @param estimate the estimate of θ
+   */
+  public record Series(String model, RankObservations observations, ThetaEstimate estimate) {}
 
   /**
    * Estimates θ for every model in {@code runs}, which maps a model's display name to its runs, and
@@ -25,9 +33,9 @@ public final class ThetaReport {
    * @return each model's series, in the order of {@code runs}
    * @throws IllegalArgumentException if a model's runs hold no ranking with a valid repair
    */
-  public static List<ThetaFigure.Series> write(Map<String, Path> runs, Path output, long seed)
+  public static List<Series> write(Map<String, Path> runs, Path output, long seed)
       throws IOException {
-    List<ThetaFigure.Series> series = new ArrayList<>();
+    List<Series> series = new ArrayList<>();
     ArrayNode models = Json.mapper().createArrayNode();
     StringBuilder csv = new StringBuilder("model,scenario,rank\n");
     for (Map.Entry<String, Path> entry : runs.entrySet()) {
@@ -37,7 +45,7 @@ public final class ThetaReport {
             entry.getKey() + ": no ranking with a valid repair in " + entry.getValue());
       }
       ThetaEstimate estimate = ThetaEstimate.of(observations.ranks(), seed);
-      series.add(new ThetaFigure.Series(entry.getKey(), observations, estimate));
+      series.add(new Series(entry.getKey(), observations, estimate));
       ObjectNode model = models.addObject();
       model.put("model", entry.getKey());
       model.put("runs", entry.getValue().toString());
@@ -61,7 +69,6 @@ public final class ThetaReport {
         .writerWithDefaultPrettyPrinter()
         .writeValue(output.resolve("theta.json").toFile(), models);
     Files.writeString(output.resolve("observations.csv"), csv);
-    Files.writeString(output.resolve("theta.tex"), ThetaFigure.tex(series));
     return series;
   }
 }

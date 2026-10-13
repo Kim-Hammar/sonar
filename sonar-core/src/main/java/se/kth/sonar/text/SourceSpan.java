@@ -28,16 +28,6 @@ public record SourceSpan(RouterId router, int first, int last) {
     return last - first + 1;
   }
 
-  /** Returns whether {@code line} lies in the span. */
-  public boolean contains(int line) {
-    return line >= first && line <= last;
-  }
-
-  /** Returns whether the two spans share a line. */
-  public boolean overlaps(SourceSpan other) {
-    return router.equals(other.router) && first <= other.last && other.first <= last;
-  }
-
   @Override
   public String toString() {
     return router + ":" + (first == last ? Integer.toString(first) : first + "-" + last);

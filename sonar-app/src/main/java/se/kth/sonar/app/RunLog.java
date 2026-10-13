@@ -245,16 +245,6 @@ public final class RunLog implements TraceSink, AutoCloseable {
     }
   }
 
-  /** Wakes every waiting reader without changing the log, for example before a shutdown. */
-  public void wake() {
-    lock.lock();
-    try {
-      changed.signalAll();
-    } finally {
-      lock.unlock();
-    }
-  }
-
   /** Closes the files and releases every waiting reader. */
   @Override
   public void close() {

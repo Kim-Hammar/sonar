@@ -2,36 +2,30 @@
 # Usage: scripts/benchmark-release.sh [--with-traces] [RUN_DIR] [OUT_DIR] [BASELINE_DIR]
 #
 # Stages the results of a benchmark run (scripts/benchmark.sh) for publication as a dataset,
-# without uploading anything. By default only the metrics are staged (the CSV and JSON results,
-# the comparison, the provenance and the scripts; no figures): the traces contain the repairs
-# of the benchmark's tasks, whose publication would let models be trained on the solutions.
-# --with-traces also stages the traces under results/, for sharing them on request. RUN_DIR defaults to output/benchmark/main, OUT_DIR to
-# output/release/sonar-results and BASELINE_DIR, the results of the LLM baselines fetched from
-# the Cornetto benchmark host, to output/benchmark/baseline/main.
+# without uploading anything. Defaults: RUN_DIR output/benchmark/main, OUT_DIR
+# output/release/sonar-results, BASELINE_DIR output/benchmark/baseline/main (the LLM baselines'
+# results from Cornetto).
+#
+# By default only metrics are staged: the traces contain the repairs of the benchmark's tasks,
+# which must not end up in training data. --with-traces also stages them under results/, for
+# sharing on request.
 #
 # Layout of OUT_DIR:
+#   per_scenario.csv, summary*.csv, summary.json    SONAR's results in Cornetto's format
+#   comparison/                                     the same merged with the LLM baselines
+#   scripts/                                        the scripts that ran and exported the benchmark
+#   MANIFEST.sha256                                 a checksum of every file
 #   results/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
 #       model, provider, theta, extra-args          the cell's settings
 #       runs/<id>/run.json, events.jsonl            the run's settings and trace
 #       runs/<id>/details.jsonl.zst                 the detailed trace, compressed with zstd
-#   per_scenario.csv, summary*.csv, summary.json    sonar's results in Cornetto's format
-#   comparison/                                     the same merged with the LLM baselines
 #   results/baselines/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
 #       config.yaml, scenarios.jsonl, llm_calls.jsonl   a baseline cell's settings and results
 #       tasks.tar.zst                               per task: the repaired configurations (fix/)
 #                                                   and their evaluation (evaluation_results.json)
-#   provenance/                                     the commit and diff the runs were built from
-#   scripts/                                        the scripts that ran, exported and plotted
-#   MANIFEST.sha256                                 a checksum of every file
 #
-# Only the cells in RELEASED are staged, and the result files keep only their rows: SONAR with
-# each decision model (the comparison with the baselines, 10 % and 100 %) and the ablations
-# (100 %). The LLM baselines (monolithic and ReAct agents, Cornetto's comparison benchmark) are
-# staged in full; their faulty input configurations are left out, being Cornetto's own data.
-#
-# Left out: the sonar installs, Batfish work directories, decision caches (their replies are in
-# the details) and plot caches. Rerunning the script updates OUT_DIR in place: a details file is
-# compressed again only when it is newer than its archive.
+# Only the cells in RELEASED are staged, and the result files keep only their rows. Rerunning
+# the script updates OUT_DIR in place; a README.md written there is kept.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 cd "$root"
@@ -120,7 +114,7 @@ else
   rm -rf "$out_dir/results"
 fi
 
-rm -rf "$out_dir/comparison" "$out_dir/plots" "$out_dir/provenance" "$out_dir/scripts"
+rm -rf "$out_dir/comparison" "$out_dir/scripts"
 mkdir -p "$out_dir/comparison"
 python3 - "$run_dir" "$out_dir" "${RELEASED[@]}" <<'PY'
 import csv, json, sys
@@ -181,11 +175,10 @@ with open(out_dir / "comparison" / "paired.csv", "w", newline="") as f:
     writer.writeheader()
     writer.writerows(rows)
 PY
-mkdir -p "$out_dir/provenance" "$out_dir/scripts"
-cp "$run_dir"/git-commit* "$run_dir"/git-diff* "$out_dir/provenance/"
+mkdir -p "$out_dir/scripts"
 cp LICENSE "$out_dir/LICENSE"
-cp scripts/benchmark.sh scripts/benchmark-export.py scripts/benchmark-plots.py \
-  scripts/benchmark-pricing.json scripts/benchmark-release.sh "$out_dir/scripts/"
+cp scripts/benchmark.sh scripts/benchmark-export.py scripts/benchmark-pricing.json \
+  scripts/benchmark-release.sh "$out_dir/scripts/"
 
 (cd "$out_dir" && find . -type f ! -name MANIFEST.sha256 | LC_ALL=C sort \
   | xargs shasum -a 256 > MANIFEST.sha256)

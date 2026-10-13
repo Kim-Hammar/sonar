@@ -68,11 +68,6 @@ public final class DecisionProblemFactory {
     this.payloadLimit = payloadLimit;
   }
 
-  /** Returns the largest question size the factory tries to stay within. */
-  public int payloadLimit() {
-    return payloadLimit;
-  }
-
   /**
    * Returns the question of which region of {@code partition} holds the repair, given what {@code
    * feedback} has shown about candidates tried in the current state.

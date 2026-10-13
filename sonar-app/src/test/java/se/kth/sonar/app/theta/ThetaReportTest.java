@@ -38,22 +38,19 @@ class ThetaReportTest {
   }
 
   @Test
-  void writesTheEstimatesTheObservationsAndASelfContainedFigure() throws IOException {
+  void writesTheEstimatesAndTheObservations() throws IOException {
     Map<String, Path> runs = new LinkedHashMap<>();
     runs.put("Model A", run("a", 1));
     runs.put("Model B", run("b", 2));
     Path output = directory.resolve("report");
-    List<ThetaFigure.Series> series = ThetaReport.write(runs, output, 3);
+    List<ThetaReport.Series> series = ThetaReport.write(runs, output, 3);
 
-    assertThat(series).extracting(ThetaFigure.Series::model).containsExactly("Model A", "Model B");
+    assertThat(series).extracting(ThetaReport.Series::model).containsExactly("Model A", "Model B");
     JsonNode models = Json.mapper().readTree(output.resolve("theta.json").toFile());
     assertThat(models).hasSize(2);
     assertThat(models.get(1).path("episodes").asInt()).isEqualTo(1);
     assertThat(Files.readAllLines(output.resolve("observations.csv")))
         .containsExactly("model,scenario,rank", "Model A,s,1", "Model B,s,2");
-    String tex = Files.readString(output.resolve("theta.tex"));
-    assertThat(tex).contains("\\pgfplotstableread", "Model A", "Model B", "1-exp(-");
-    assertThat(tex).doesNotContain(".dat", ".csv");
   }
 
   @Test

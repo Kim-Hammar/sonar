@@ -1,7 +1,6 @@
 package se.kth.sonar.program;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -95,10 +94,6 @@ public final class RelationEvaluator {
   }
 
   /** Returns the instances of every relation, in schema order, with their violations. */
-  public List<RelationInstance> evaluate(Collection<ProgramObject> objects) {
-    return evaluate(new ObjectIndex(objects));
-  }
-
   List<RelationInstance> evaluate(ObjectIndex objects) {
     Index index = new Index(objects);
     List<RelationInstance> instances = new ArrayList<>();
@@ -114,13 +109,6 @@ public final class RelationEvaluator {
    * object of its role types changed and none of its instances read a changed object; otherwise its
    * tuples are formed again, and a tuple whose roles and reads are untouched keeps its violations.
    */
-  public List<RelationInstance> reevaluate(
-      Collection<ProgramObject> objects,
-      List<RelationInstance> previous,
-      Set<ProgramObject.Ref> changed) {
-    return reevaluate(new ObjectIndex(objects), previous, changed);
-  }
-
   List<RelationInstance> reevaluate(
       ObjectIndex objects, List<RelationInstance> previous, Set<ProgramObject.Ref> changed) {
     Index index = new Index(objects);
