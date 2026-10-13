@@ -75,6 +75,7 @@ public record RunDocument(
    * @param uniformPrior whether the prior is uniform, or null for the informed prior
    * @param regionAssessment whether the decision model assesses regions, or null if it does
    * @param localization whether regions are localized by the evidence, or null if they are
+   * @param eta the weight of the decision model's assessments, or null for the default 1
    */
   public record Settings(
       int specificationPercent,
@@ -89,7 +90,8 @@ public record RunDocument(
       KoopmanPolicy.Parameters koopman,
       Boolean uniformPrior,
       Boolean regionAssessment,
-      Boolean localization) {
+      Boolean localization,
+      Double eta) {
 
     /** Copies the limits. */
     public Settings {
@@ -117,7 +119,8 @@ public record RunDocument(
           settings.koopman().orElse(null),
           settings.uniformPrior() ? Boolean.TRUE : null,
           settings.regionAssessment() ? null : Boolean.FALSE,
-          settings.localization() ? null : Boolean.FALSE);
+          settings.localization() ? null : Boolean.FALSE,
+          settings.eta() == 1 ? null : settings.eta());
     }
 
     /**
@@ -141,7 +144,8 @@ public record RunDocument(
           Optional.ofNullable(koopman),
           Boolean.TRUE.equals(uniformPrior),
           !Boolean.FALSE.equals(regionAssessment),
-          !Boolean.FALSE.equals(localization));
+          !Boolean.FALSE.equals(localization),
+          eta == null ? 1 : eta);
     }
   }
 }

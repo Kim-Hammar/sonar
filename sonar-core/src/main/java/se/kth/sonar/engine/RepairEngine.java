@@ -165,7 +165,10 @@ public final class RepairEngine implements Repairer {
               case SearchPolicy.Action.Assess a -> assess(a.partition());
               case SearchPolicy.Action.Expand e -> expand(e.region());
               case SearchPolicy.Action.Rank r -> rank(r.region());
-              case SearchPolicy.Action.Verify v -> verify(v.region(), v.hypotheses());
+              case SearchPolicy.Action.Verify v -> {
+                emitStep(v.region(), v.hypotheses().size());
+                yield verify(v.region(), v.hypotheses());
+              }
             };
         if (stop.isPresent()) {
           return result(stop.get());
@@ -462,6 +465,20 @@ public final class RepairEngine implements Repairer {
       Distribution<Region.Id> prior = timed("prior", () -> epochs.prior(epoch));
       belief = timed("belief", () -> components.beliefs().initial(prior, now()));
       emitSpace();
+    }
+
+    /** Records a search step with the posterior of the ten most probable regions. */
+    private void emitStep(Region.Id region, int candidates) {
+      Distribution<Region.Id> posterior = belief.posterior();
+      Map<Region.Id, Double> top = new LinkedHashMap<>();
+      posterior.outcomes().stream()
+          .sorted(
+              java.util.Comparator.comparingDouble(posterior::probability)
+                  .reversed()
+                  .thenComparing(Region.Id::value))
+          .limit(10)
+          .forEach(id -> top.put(id, posterior.probability(id)));
+      TraceSink.emit(new TraceEvent.Step(now(), region, candidates, top));
     }
 
     private void emitSpace() {

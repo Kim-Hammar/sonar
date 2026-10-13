@@ -91,6 +91,18 @@ def adopted_ranks(records):
     return ranks
 
 
+def changed_lines(edit):
+    """The number of configuration lines an edit changes: removed, inserted or rewritten."""
+    span = edit["last"] - edit["first"] + 1 if edit.get("first") is not None and \
+        edit.get("last") is not None else 0
+    added = len(edit.get("lines", []))
+    if edit["op"] == "delete":
+        return span
+    if edit["op"] == "replace":
+        return max(span, added)
+    return added
+
+
 def regions_explored(events):
     """Distinct regions with at least one verified candidate, counted afresh in each epoch."""
     epoch, explored = 0, set()
@@ -140,6 +152,8 @@ def extract(cell):
                 "regions_explored": regions_explored(evs),
                 "calls": [(e["question"], e["inputTokens"], e["outputTokens"])
                           for e in evs if e["type"] == "decided"],
+                "edits": [[(x["router"], x["op"], changed_lines(x)) for h in r["hypotheses"]
+                           for x in h["edits"]] for r in records if r["type"] == "adopted"],
             }
             print(f"  {scenario}", flush=True)
     return scenarios
@@ -610,6 +624,147 @@ def tokens_tex(data):
             "\\end{document}\n")
 
 
+OPS = [("delete", "Delete statement"), ("replace", "Replace value"),
+       ("insert", "Insert statement")]
+OP_COLOR = {"delete": "#e34948", "replace": "#2a78d6", "insert": "#1baf7a"}
+OP_TEX = {"delete": "red!75!black", "replace": "blue!70!black", "insert": "teal!80!black"}
+
+
+def repair_sizes(scen):
+    """Per scenario: lines changed, routers changed; and the edits per operation (insertions at the
+    end of a block, `append`, count as insertions)."""
+    lines, routers, ops = [], [], {op: 0 for op, _ in OPS}
+    for s in scen.values():
+        edits = [e for adoption in s["edits"] for e in adoption]
+        lines.append(sum(e[2] for e in edits))
+        routers.append(len({e[0] for e in edits}))
+        for e in edits:
+            ops["insert" if e[1] == "append" else e[1]] += 1
+    return lines, routers, ops
+
+
+def plot_repairs(data, out):
+    fig, axes = plt.subplots(1, 3, figsize=(10, 2.9), gridspec_kw={"width_ratios": [1, 1, 1.1]})
+    for ax, idx, xlabel in ((axes[0], 0, "Configuration lines changed per scenario"),
+                            (axes[1], 1, "Routers changed per scenario")):
+        for pct, scen in data.items():
+            values = repair_sizes(scen)[idx]
+            xs, ys = ecdf(values)
+            ax.step(xs, ys, where="post", color=COLOR[pct], linewidth=1.8, label=LABEL[pct])
+            ax.axvline(float(np.median(values)), color=COLOR[pct], linewidth=0.8, linestyle=":")
+        if idx == 0:
+            ax.set_xscale("log")
+            ticks = [1, 2, 5, 10, 20, 50, 100]
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([str(t) for t in ticks])
+            ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlabel(xlabel, fontsize=9, color=INK)
+        ax.set_ylabel("Probability", fontsize=9, color=INK)
+        ax.set_ylim(0, 1.02)
+        ax.set_title(f"({'ab'[idx]}) Empirical CDF", fontsize=9, color=INK, loc="left")
+        style(ax)
+    axes[0].legend(fontsize=8, frameon=False, loc="lower right")
+    ax = axes[2]
+    for row, (pct, scen) in enumerate(data.items()):
+        ops = repair_sizes(scen)[2]
+        total = sum(ops.values())
+        left = 0.0
+        for op, label in OPS:
+            share = 100 * ops[op] / total
+            ax.barh(row, share, left=left, height=0.55, color=OP_COLOR[op], edgecolor="white",
+                    linewidth=1.5, label=label if row == 0 else None)
+            if share >= 8:
+                ax.text(left + share / 2, row, f"{share:.0f}%", ha="center", va="center",
+                        fontsize=8, color="white")
+            left += share
+    ax.set_yticks(range(len(data)))
+    ax.set_yticklabels([f"{p}%" for p in data], fontsize=8)
+    ax.set_ylabel("Specifications", fontsize=9, color=INK)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("Share of the edits (%)", fontsize=9, color=INK)
+    ax.set_title("(c) Kinds of edits", fontsize=9, color=INK, loc="left")
+    style(ax)
+    ax.grid(axis="y", visible=False)
+    ax.legend(fontsize=7, frameon=False, loc="upper center", bbox_to_anchor=(0.45, -0.3), ncol=3)
+    fig.tight_layout()
+    save(fig, out, "repair-size")
+
+
+def repairs_tex(data):
+    """The repair-size figure as standalone pgfplots source, in the style of the theta figure."""
+    tables, curves = [], {0: [], 1: []}
+    for pct, scen in data.items():
+        sizes = repair_sizes(scen)
+        for idx in (0, 1):
+            name = f"size{'ab'[idx]}{'o' if pct == 10 else 'oo'}"
+            xs, ys = ecdf(sizes[idx])
+            rows = {}
+            for x, y in zip(xs, ys):
+                rows[int(x)] = y
+            what = "lines" if idx == 0 else "routers"
+            tables.append(f"% {pct}% specifications: empirical CDF of the {what} changed per "
+                          "scenario.\n\\pgfplotstableread{\n  x p\n"
+                          + "".join(f"  {max(x, 1) if idx == 0 else x} {y:.4f}\n"
+                                    for x, y in sorted(rows.items()))
+                          + f"}}\\{name}\n")
+            curves[idx].append(f"      \\addplot[const plot, thick, color={TEX_COLOR[pct]}] "
+                               f"table[x=x, y=p] {{\\{name}}};\n"
+                               + (f"      \\addlegendentry{{{pct}\\% specifications}}\n"
+                                  if idx == 0 else ""))
+    shares = []
+    for row, (pct, scen) in enumerate(data.items()):
+        ops = repair_sizes(scen)[2]
+        total = sum(ops.values())
+        shares.append(f"  {row} " + " ".join(f"{100 * ops[op] / total:.2f}" for op, _ in OPS)
+                      + "\n")
+    tables.append("% Share of the edits (%) per kind: delete, replace, insert.\n"
+                  "\\pgfplotstableread{\n  row delete replace insert\n" + "".join(shares)
+                  + "}\\edits\n")
+    bars = "".join(f"      \\addplot[fill={OP_TEX[op]}, draw=white] table[x={op}, y=row] "
+                   f"{{\\edits}};\n      \\addlegendentry{{{label}}}\n" for op, label in OPS)
+    labels = ",".join(f"{{{p}\\%}}" for p in data)
+    common = ("        ylabel={Probability}, ymin=0, ymax=1.02,\n"
+              "        grid=major, grid style={gray!25},\n")
+    return ("\\documentclass[tikz]{standalone}\n"
+            "\\usepackage{pgfplots}\n"
+            "\\usepackage{pgfplotstable}\n"
+            "\\usepgfplotslibrary{groupplots}\n"
+            "\\pgfplotsset{compat=1.18}\n"
+            "\\begin{document}\n"
+            + "".join(tables) +
+            "\\begin{tikzpicture}\n"
+            "  \\begin{groupplot}[\n"
+            "      group style={group size=3 by 1, horizontal sep=1.6cm},\n"
+            "      height=5.0cm, width=5.6cm,\n"
+            "      tick label style={font=\\footnotesize},\n"
+            "      label style={font=\\small},\n"
+            "      title style={font=\\small},\n"
+            "    ]\n"
+            "    \\nextgroupplot[\n"
+            "        title={(a) Empirical CDF},\n"
+            "        xmode=log, xtick={1,2,5,10,20,50,100}, xticklabels={1,2,5,10,20,50,100},\n"
+            "        xlabel={Lines changed per scenario},\n" + common +
+            "        legend pos=south east,\n"
+            "        legend style={font=\\footnotesize, draw=none, fill=none, cells={anchor=west}},\n"
+            "      ]\n" + "".join(curves[0]) +
+            "    \\nextgroupplot[\n"
+            "        title={(b) Empirical CDF},\n"
+            "        xlabel={Routers changed per scenario},\n" + common +
+            "      ]\n" + "".join(curves[1]) +
+            "    \\nextgroupplot[\n"
+            "        title={(c) Kinds of edits}, width=6.4cm,\n"
+            "        xbar stacked, bar width=0.5cm, xmin=0, xmax=100,\n"
+            f"        ymin=-0.6, ymax={len(data) - 0.4}, ytick={{0,...,{len(data) - 1}}},"
+            f" yticklabels={{{labels}}}, ylabel={{Specifications}},\n"
+            "        xlabel={Share of the edits (\\%)}, xmajorgrids=true, grid style={gray!25},\n"
+            "        legend style={font=\\footnotesize, draw=none, at={(0.5,-0.32)}, anchor=north,"
+            " legend columns=3},\n"
+            "      ]\n" + bars +
+            "  \\end{groupplot}\n"
+            "\\end{tikzpicture}\n"
+            "\\end{document}\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=Path)
@@ -638,6 +793,9 @@ def main():
     print("wrote effort-ecdf.tex")
     (out / "search-progress.tex").write_text(progress_tex(data))
     print("wrote search-progress.tex")
+    plot_repairs(data, out)
+    (out / "repair-size.tex").write_text(repairs_tex(data))
+    print("wrote repair-size.tex")
     plot_tokens(data, out)
     (out / "token-usage.tex").write_text(tokens_tex(data))
     print("wrote token-usage.tex")

@@ -143,6 +143,24 @@ public sealed interface TraceEvent {
   }
 
   /**
+   * A search step: the policy chose to verify {@code candidates} candidates from {@code region}
+   * with the belief {@code posterior} over the most probable regions.
+   *
+   * @param epoch the epoch of the step
+   * @param region the region searched
+   * @param candidates the number of candidates to verify
+   * @param posterior the posterior of the most probable regions, in descending order
+   */
+  record Step(int epoch, Region.Id region, int candidates, Map<Region.Id, Double> posterior)
+      implements TraceEvent {
+    /** Copies the posterior. */
+    public Step {
+      Objects.requireNonNull(region, "region");
+      posterior = Collections.unmodifiableMap(new LinkedHashMap<>(posterior));
+    }
+  }
+
+  /**
    * The time each phase of the repair took, per operation, recorded when the repair ends.
    *
    * @param nanos per phase (verification, adoption, search-space, prior, policy, candidates,

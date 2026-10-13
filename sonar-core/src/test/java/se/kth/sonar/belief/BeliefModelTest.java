@@ -51,6 +51,18 @@ class BeliefModelTest {
   }
 
   @Test
+  void theWeightEtaRaisesTheOddsToItsPower() {
+    RegionAssessment assessment =
+        new RegionAssessment(Distribution.of(Map.of(A, 0.75, B, 0.25)), 0.5);
+    BeliefState half = new BeliefModel(0.5).afterAssessment(start(), AB, assessment);
+    assertThat(half.odds().get(A)).isCloseTo(Math.sqrt(0.75), within(1e-12));
+    assertThat(half.odds().get(B)).isCloseTo(Math.sqrt(0.25), within(1e-12));
+    BeliefState ignored = new BeliefModel(0).afterAssessment(start(), AB, assessment);
+    assertThat(ignored.posterior().asMap()).isEqualTo(start().posterior().asMap());
+    assertThat(ignored.isAssessed(A)).isTrue();
+  }
+
+  @Test
   void aNeutralAssessmentOnlyMarksThePartition() {
     BeliefState belief = model.afterNeutralAssessment(start(), AB);
     assertThat(belief.isAssessed(A)).isTrue();

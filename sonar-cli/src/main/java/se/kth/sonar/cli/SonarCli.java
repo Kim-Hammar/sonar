@@ -349,6 +349,15 @@ public final class SonarCli implements Runnable {
                 + " evidence implicates in a violated specification (an ablation).")
     private boolean noLocalization;
 
+    @Option(
+        names = "--eta",
+        defaultValue = "1",
+        paramLabel = "η",
+        description =
+            "Weight η in [0, 1] of the decision model's assessments in the belief update: their"
+                + " likelihood ratio is raised to the power η (default: ${DEFAULT-VALUE}).")
+    private double eta;
+
     /** The search policies a run can choose. */
     enum Policy {
       greedy,
@@ -450,7 +459,8 @@ public final class SonarCli implements Runnable {
                   : Optional.empty(),
               prior == Prior.uniform,
               !noRegionAssessment,
-              !noLocalization);
+              !noLocalization,
+              eta);
       Workspace workspace = workspace(spec, dataset, output);
       HttpTransport.Settings model = decisions.settings();
       PrintWriter out = spec.commandLine().getOut();

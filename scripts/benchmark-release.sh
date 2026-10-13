@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# Usage: scripts/benchmark-release.sh [RUN_DIR] [OUT_DIR]
+# Usage: scripts/benchmark-release.sh [--with-traces] [RUN_DIR] [OUT_DIR] [BASELINE_DIR]
 #
 # Stages the results of a benchmark run (scripts/benchmark.sh) for publication as a dataset,
-# without uploading anything. RUN_DIR defaults to output/benchmark/main and OUT_DIR to
-# output/release/sonar-results.
+# without uploading anything. By default only the metrics are staged (the CSV and JSON results,
+# the comparison, the provenance and the scripts; no figures): the traces contain the repairs
+# of the benchmark's tasks, whose publication would let models be trained on the solutions.
+# --with-traces also stages the traces under results/, for sharing them on request. RUN_DIR defaults to output/benchmark/main, OUT_DIR to
+# output/release/sonar-results and BASELINE_DIR, the results of the LLM baselines fetched from
+# the Cornetto benchmark host, to output/benchmark/baseline/main.
 #
 # Layout of OUT_DIR:
-#   results/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/
+#   results/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
 #       model, provider, theta, extra-args          the cell's settings
 #       runs/<id>/run.json, events.jsonl            the run's settings and trace
 #       runs/<id>/details.jsonl.zst                 the detailed trace, compressed with zstd
 #   per_scenario.csv, summary*.csv, summary.json    sonar's results in Cornetto's format
 #   comparison/                                     the same merged with the LLM baselines
-#   plots/                                          the figures (pdf, png, tex)
+#   results/baselines/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
+#       config.yaml, scenarios.jsonl, llm_calls.jsonl   a baseline cell's settings and results
+#       tasks.tar.zst                               per task: the repaired configurations (fix/)
+#                                                   and their evaluation (evaluation_results.json)
 #   provenance/                                     the commit and diff the runs were built from
 #   scripts/                                        the scripts that ran, exported and plotted
 #   MANIFEST.sha256                                 a checksum of every file
 #
 # Only the cells in RELEASED are staged, and the result files keep only their rows: SONAR with
 # each decision model (the comparison with the baselines, 10 % and 100 %) and the ablations
-# (100 %). The LLM baselines are added once their results are imported.
+# (100 %). The LLM baselines (monolithic and ReAct agents, Cornetto's comparison benchmark) are
+# staged in full; their faulty input configurations are left out, being Cornetto's own data.
 #
 # Left out: the sonar installs, Batfish work directories, decision caches (their replies are in
 # the details) and plot caches. Rerunning the script updates OUT_DIR in place: a details file is
@@ -28,8 +36,14 @@ set -euo pipefail
 . "$(dirname "$0")/common.sh"
 cd "$root"
 
+with_traces=false
+if [ "${1:-}" = "--with-traces" ]; then
+  with_traces=true
+  shift
+fi
 run_dir="${1:-output/benchmark/main}"
 out_dir="${2:-output/release/sonar-results}"
+baseline_dir="${3:-output/benchmark/baseline/main}"
 mkdir -p "$out_dir"
 
 RELEASED=(
@@ -48,6 +62,7 @@ RELEASED=(
   sonar-koopman/google-gemini-3.8-flash/spec-100pct/seed-42
 )
 
+if $with_traces; then
 # A cell staged earlier but no longer released is removed.
 if [ -d "$out_dir/results" ]; then
   while read -r staged; do
@@ -80,37 +95,93 @@ for relative in "${RELEASED[@]}"; do
   done
 done
 
+# A baseline cell is spec-<pct>pct/seed-<seed>; the oldest cells keep their results directly in
+# spec-<pct>pct (Cornetto's earlier layout, seed 42), and are staged as seed-42.
+baseline_cells=()
+for spec in "$baseline_dir"/cells/*/*/spec-*pct; do
+  if compgen -G "$spec/seed-*" > /dev/null; then
+    for cell in "$spec"/seed-*; do baseline_cells+=("$cell"); done
+  elif [ -f "$spec/scenarios.jsonl" ]; then
+    baseline_cells+=("$spec")
+  fi
+done
+for cell in "${baseline_cells[@]}"; do
+  relative="${cell#"$baseline_dir"/cells/}"
+  case "$relative" in */seed-*) ;; *) relative="$relative/seed-42" ;; esac
+  target="$out_dir/results/baselines/$relative"
+  mkdir -p "$target"
+  cp "$cell/config.yaml" "$cell/scenarios.jsonl" "$cell/llm_calls.jsonl" "$target/"
+  if [ ! "$target/tasks.tar.zst" -nt "$cell/scenarios.jsonl" ]; then
+    echo "packing baselines/$relative/tasks"
+    tar -C "$cell" -cf - tasks | zstd -q -f -12 -T0 -o "$target/tasks.tar.zst"
+  fi
+done
+else
+  rm -rf "$out_dir/results"
+fi
+
+rm -rf "$out_dir/comparison" "$out_dir/plots" "$out_dir/provenance" "$out_dir/scripts"
+mkdir -p "$out_dir/comparison"
 python3 - "$run_dir" "$out_dir" "${RELEASED[@]}" <<'PY'
 import csv, json, sys
 from pathlib import Path
 run_dir, out_dir, cells = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:]
+BASELINES = {"monolithic", "react"}
 released = set()
 for cell in cells:
     method, slug, spec, _ = cell.split("/")
     model = (run_dir / "cells" / cell / "model").read_text().strip()
     released.add((method, model, spec[len("spec-"):-len("pct")]))
-for name in ("per_scenario.csv", "summary.csv", "summary_by_seed.csv"):
-    with open(run_dir / name) as f:
-        reader = csv.DictReader(f)
-        rows = [r for r in reader if (r["method"], r["model"], r["spec_pct"]) in released]
-        fields = reader.fieldnames
-    with open(out_dir / name, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
-summary = json.loads((run_dir / "summary.json").read_text())
-for key in ("summary", "summary_by_seed"):
-    summary[key] = [r for r in summary[key]
-                    if (r["method"], r["model"], str(r["spec_pct"])) in released]
-models = {model for _, model, _ in released}
-summary["pricing_usd_per_1m_tokens"] = {
-    model: price for model, price in summary["pricing_usd_per_1m_tokens"].items()
-    if model in models}
-(out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+
+def kept(method, model, pct):
+    return (method, model, str(pct)) in released or method in BASELINES
+
+
+def stage(src, dst):
+    """Copies the exports in src to dst, keeping only the rows of released results."""
+    for name in ("per_scenario.csv", "summary.csv", "summary_by_seed.csv"):
+        with open(src / name) as f:
+            reader = csv.DictReader(f)
+            rows = [r for r in reader if kept(r["method"], r["model"], r["spec_pct"])]
+            fields = reader.fieldnames
+        with open(dst / name, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+    summary = json.loads((src / "summary.json").read_text())
+    for key in ("summary", "summary_by_seed"):
+        summary[key] = [r for r in summary[key] if kept(r["method"], r["model"], r["spec_pct"])]
+    models = {r["model"] for r in summary["summary"]}
+    summary["pricing_usd_per_1m_tokens"] = {
+        model: price for model, price in summary["pricing_usd_per_1m_tokens"].items()
+        if model in models}
+    (dst / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+
+stage(run_dir, out_dir)
+stage(run_dir / "comparison", out_dir / "comparison")
+# paired.csv: one line per scenario with a column group per method; blank unreleased results.
+with open(run_dir / "comparison" / "paired.csv") as f:
+    reader = csv.DictReader(f)
+    fields = reader.fieldnames
+    rows = list(reader)
+for row in rows:
+    for field in fields[3:]:
+        method, rest = field.split("[", 1)
+        model = rest.split("]", 1)[0]
+        if not kept(method, model, row["spec_pct"]):
+            row[field] = ""
+groups = {f.rsplit(".", 1)[0] for f in fields[3:]}
+empty = {g for g in groups if all(not row[f] for row in rows for f in fields[3:]
+                                  if f.rsplit(".", 1)[0] == g)}
+fields = fields[:3] + [f for f in fields[3:] if f.rsplit(".", 1)[0] not in empty]
+with open(out_dir / "comparison" / "paired.csv", "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
 PY
-rm -rf "$out_dir/comparison" "$out_dir/plots" "$out_dir/provenance" "$out_dir/scripts"
-mkdir -p "$out_dir/plots" "$out_dir/provenance" "$out_dir/scripts"
-cp "$run_dir"/plots/*.pdf "$run_dir"/plots/*.png "$run_dir"/plots/*.tex "$out_dir/plots/"
+mkdir -p "$out_dir/provenance" "$out_dir/scripts"
 cp "$run_dir"/git-commit* "$run_dir"/git-diff* "$out_dir/provenance/"
 cp LICENSE "$out_dir/LICENSE"
 cp scripts/benchmark.sh scripts/benchmark-export.py scripts/benchmark-plots.py \

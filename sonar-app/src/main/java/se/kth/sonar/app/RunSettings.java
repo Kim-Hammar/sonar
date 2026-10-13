@@ -28,6 +28,7 @@ import se.kth.sonar.policy.SearchPolicy;
  *     belief learns from verification alone and the model only ranks candidates
  * @param localization whether regions are built only on the routers the verifier's evidence
  *     implicates; without it (an ablation) they are built on every router
+ * @param eta the weight {@code η ∈ [0, 1]} of the decision model's assessments in the belief
  */
 public record RunSettings(
     int specificationPercent,
@@ -39,7 +40,8 @@ public record RunSettings(
     Optional<KoopmanPolicy.Parameters> koopman,
     boolean uniformPrior,
     boolean regionAssessment,
-    boolean localization) {
+    boolean localization,
+    double eta) {
 
   /**
    * Checks the settings.
@@ -70,6 +72,9 @@ public record RunSettings(
       throw new IllegalArgumentException("the time limit must be positive");
     }
     Objects.requireNonNull(koopman, "koopman");
+    if (!(eta >= 0 && eta <= 1)) {
+      throw new IllegalArgumentException("η must lie in [0, 1]");
+    }
   }
 
   /** Creates settings with the informed prior. */
@@ -91,7 +96,8 @@ public record RunSettings(
         koopman,
         false,
         true,
-        true);
+        true,
+        1);
   }
 
   /** Creates settings for the greedy policy. */

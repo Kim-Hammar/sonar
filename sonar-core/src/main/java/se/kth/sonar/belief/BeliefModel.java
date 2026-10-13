@@ -20,9 +20,32 @@ import se.kth.sonar.search.Region;
  * never raises the belief. A near miss, a candidate that fixed a specification while breaking
  * another, shows that its object matters, and lends every region editing that object the bounded
  * factor {@code 1 + n / (n + 1)} for {@code n} near misses.
+ *
+ * <p>The weight {@code η ∈ [0, 1]} of the decision model's assessment raises its likelihood ratio
+ * to the power {@code η}: {@code η = 1} (the default) takes the assessment at face value and {@code
+ * η = 0} ignores it.
  */
 public final class BeliefModel {
   private static final double MINIMUM_NONE = 1e-12;
+
+  private final double eta;
+
+  /** Creates a model that takes the decision model's assessments at face value ({@code η = 1}). */
+  public BeliefModel() {
+    this(1);
+  }
+
+  /**
+   * Creates a model that weighs the decision model's assessments by {@code eta}.
+   *
+   * @throws IllegalArgumentException if {@code eta} is not in [0, 1]
+   */
+  public BeliefModel(double eta) {
+    if (!(eta >= 0 && eta <= 1)) {
+      throw new IllegalArgumentException("η must lie in [0, 1]: " + eta);
+    }
+    this.eta = eta;
+  }
 
   /** Returns the belief before any evidence, which is the prior. */
   public BeliefState initial(Distribution<Region.Id> prior, int epoch) {
@@ -35,7 +58,7 @@ public final class BeliefModel {
     Map<Region.Id, Double> odds = new LinkedHashMap<>(belief.odds());
     double none = Math.max(MINIMUM_NONE, assessment.none());
     for (Region.Id region : partition.regions()) {
-      odds.put(region, (1 - none) * assessment.regions().probability(region) / none);
+      odds.put(region, Math.pow((1 - none) * assessment.regions().probability(region) / none, eta));
     }
     return new BeliefState(
         belief.prior(),

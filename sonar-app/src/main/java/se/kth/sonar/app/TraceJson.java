@@ -98,6 +98,13 @@ final class TraceJson {
         detail.set("evidence", evidence(adopted.verification().evidence(), null));
       }
       case TraceEvent.Finished finished -> finished(finished.result(), summary, detail);
+      case TraceEvent.Step searched -> {
+        summary.put("epoch", searched.epoch());
+        summary.put("region", searched.region().value());
+        summary.put("candidates", searched.candidates());
+        ObjectNode posterior = summary.putObject("posterior");
+        searched.posterior().forEach((id, p) -> posterior.put(id.value(), p));
+      }
       case TraceEvent.Timings timings -> {
         ObjectNode phases = summary.putObject("nanos");
         timings
@@ -127,6 +134,7 @@ final class TraceJson {
       case TraceEvent.Adopted _ -> "adopted";
       case TraceEvent.Finished _ -> "finished";
       case TraceEvent.Timings _ -> "timings";
+      case TraceEvent.Step _ -> "step";
       case TraceEvent.Failed _ -> "failed";
     };
   }
