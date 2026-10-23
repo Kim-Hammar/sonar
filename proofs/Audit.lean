@@ -17,3 +17,10 @@ import Sonar
 -- Proposition 3: a step of SONAR takes O(n) operations and computes rules (5)-(6) and the update.
 #print axioms Sonar.Step.sonarStep_linear
 #print axioms Sonar.Step.sonarStep_val
+
+-- Proposition 4: soundness (a) and completeness (b) of SONAR.
+#print axioms Sonar.RepairProcess.g_step_le
+#print axioms Sonar.RepairProcess.g_iterate_le
+#print axioms Sonar.RepairProcess.valid_repair_within
+#print axioms Sonar.RepairProcess.terminates
+#print axioms Sonar.RepairProcess.terminates_within

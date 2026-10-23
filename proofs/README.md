@@ -22,6 +22,7 @@ whose axioms are checked.
 | Prop. 1: an optimal search policy exists | `Sonar.SearchModel.exists_optimal_policy` | `Sonar/Existence.lean` |
 | Prop. 2: NP-hardness (correctness of the reduction from min-sum set cover) | `Sonar.MinSumSetCover.Instance.extract_optimal`, `searchCost_optimal_eq` | `Sonar/Reduction.lean` |
 | Prop. 3: a step of SONAR takes `O(n)` operations | `Sonar.Step.sonarStep_linear`, `sonarStep_val` | `Sonar/Complexity.lean` |
+| Prop. 4: soundness and completeness of SONAR | `Sonar.RepairProcess.g_step_le`, `terminates`, `terminates_within` | `Sonar/Completeness.lean` |
 
 ## Scope
 
@@ -36,3 +37,9 @@ whose axioms are checked.
 - **Prop. 3.** The step is written in a cost monad (`Counted`, one operation per comparison or
   arithmetic operation) and proved to compute rules (5)–(6) and the Bayesian update exactly, in at
   most `10 n + 14` operations. The agent and the verifier are outside the count, as in the paper.
+- **Prop. 4.** The repair process is abstract (`RepairProcess`): any selection rule that picks at
+  least `r_min ≥ 1` unverified candidates per step (or all that remain), and adopts only repairs
+  verified to reduce `g_Φ`. So the result holds for every belief and decision model. After an
+  adoption the search space is regenerated. Proves (a), a valid repair within `⌈N_t / r_min⌉`
+  steps (`valid_repair_within`), and (b), with the bound `g_Φ(c_1) ⌈N / r_min⌉` when every
+  search space has at most `N` candidates.

@@ -6,3 +6,4 @@ every proof.
 import Sonar.Existence
 import Sonar.Reduction
 import Sonar.Complexity
+import Sonar.Completeness
