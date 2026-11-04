@@ -1,12 +1,12 @@
-# sonar
+# SONAR
 
-SONAR: Search-Optimal Network Agentic Repair.
+SONAR: (S)earch-(O)ptimal (N)etwork (A)utonomous (R)epair.
 
 ## Requirements
 
-- A JDK 17+ to launch Gradle (Gradle downloads JDK 25, which builds and runs sonar).
+- A JDK 17+ to launch Gradle, which is used to build and run SONAR.
 - Node.js 22.12+ for the web interface.
-- Docker, once, to extract the embedded Batfish jar.
+- Docker.
 
 ## Commands
 
@@ -28,17 +28,3 @@ The dataset is read from `dataset/main_dataset` and results are written to `outp
 audits are the `audit`-tagged tests of `sonar-app`; they also need the ground truth in
 `../aros/results/ground_truth`.
 
-## Modules
-
-| Module | Contents |
-|---|---|
-| `sonar-core` | Domain model, grammar and relation languages, repair generation, search, decisions, tracing; JDK only |
-| `sonar-batfish` | Data-plane verification with an embedded Batfish |
-| `sonar-jev` | The decision model over HTTP (Jev, or an LLM via chat completions) |
-| `sonar-dataset` | Benchmark scenarios and specifications |
-| `sonar-app` | Run settings, the assembled pipeline, run logs, θ estimation |
-| `sonar-web` | The web server and API; the React interface is in `sonar-web/frontend` |
-| `sonar-cli` | The `sonar` command: `repair`, `serve`, `theta` |
-| `proofs` | Lean 4 formalization of the paper's propositions |
-
-The Cisco IOS dialect is defined in `sonar-core/src/main/resources/se/kth/sonar/dialect/`.
