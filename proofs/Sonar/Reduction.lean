@@ -1,24 +1,27 @@
 /-
-# Correctness of the reduction from min-sum set cover (Proposition 2)
+# Correctness of the reduction from min-sum set cover (Proposition 4)
 
-Proposition 2 states that computing an optimal search policy is NP-hard, by a reduction from
+Proposition 4 states that computing an optimal search policy is NP-hard, by a reduction from
 min-sum set cover (MSSC), which is NP-hard [Feige, Lovász, Tetali 2004, Thm. 1]. This module
 formalizes the reduction and proves it correct; that MSSC is NP-hard and that the reduction
 runs in polynomial time are not formalized (see the README).
 
 An MSSC instance is a family `sets : Fin n → Finset U` that covers `U`. An ordering places set
 `i` at position `π i`; element `u` is covered at the first position whose set contains it, and
-the cost of the ordering is the sum over `u` of that position plus one.
+the cost of the ordering is the sum over `u` of that position plus one, i.e., `|U| A(π)`.
 
-The search instance (`model`) has one region per set and one possible cause of the violation per
-element, equally likely. A search state is the true cause `u` and the belief: either repaired, or
-the set `W` of causes not yet ruled out. Verifying candidates from region `i` repairs the network
-if `u ∈ sets i` and otherwise rules out the causes in `sets i`. With a uniform prior, the expected
-cost of a policy is `searchCost / |U|`.
+The search instance (`model`) has `g_Φ(c_1) = 1`, `r_max = 1`, one region per set and one possible
+cause of the violation per element, equally likely (the prior `b_1(V)` groups the causes by the
+set `V` of regions that contain them). A search state is the true cause `u` and the belief: either
+repaired, or the set `W` of causes not yet ruled out; the belief determines `g_Φ`, so a policy only
+needs the belief. Verifying candidates from region `i` repairs the network if `u ∈ sets i` and
+otherwise rules out the causes in `sets i`. The expected cost of a policy is `searchCost / |U|`.
 
-* `exists_policy_le`: every ordering yields a policy whose total cost is at most the ordering's.
+* `exists_policy_le`: every ordering yields a policy whose total cost is at most `1 + κ` times the
+  ordering's.
 * `mssc_extract_le`: every policy yields an ordering (`extract`, read off the policy's search
-  while the network is not repaired) whose cost is at most the policy's total cost, if `λ ≥ n`.
+  while the network is not repaired) whose cost times `1 + κ` is at most the policy's total cost,
+  if `λ ≥ (1 + κ) n`.
 * `extract_optimal`: hence the ordering extracted from an optimal search policy is optimal.
 -/
 import Sonar.Existence
@@ -32,15 +35,15 @@ namespace Sonar
 
 namespace SearchModel
 
-variable {S B X : Type*} (M : SearchModel S B X Unit)
+variable {S Info Region : Type*} (M : SearchModel S Info Region Unit)
 
-/-- With a single verification outcome of probability one, the cost satisfies the recursion of a
-deterministic search: a step costs its `r` plus the stopping cost or the cost of what follows. -/
-theorem cost_eq_of_deterministic (hp : ∀ s d, M.prob s d () = 1) (μ : Policy B X) (s : S) :
+/-- With a single search outcome of probability one, the cost satisfies the recursion of a
+deterministic search: stopping costs `λ g_Φ`, and any other step costs `r + κ` plus what follows. -/
+theorem cost_eq_of_deterministic (hp : ∀ s d, M.prob s d () = 1) (μ : Policy Info Region) (s : S) :
     M.cost μ s =
-      if M.Stops s (μ (M.belief s)) then
-        ((μ (M.belief s)).2 : ℝ≥0∞) + M.lam * M.violated s
-      else ((μ (M.belief s)).2 : ℝ≥0∞) + M.cost μ (M.next s (μ (M.belief s)) ()) := by
+      if M.Stops s (μ (M.info s)) then
+        (M.lam : ℝ≥0∞) * M.violated s
+      else ((μ (M.info s)).2 : ℝ≥0∞) + M.κ + M.cost μ (M.next s (μ (M.info s)) ()) := by
   have hshift : M.cost μ s = ⨆ T, M.costUpTo μ (T + 1) s := by
     apply le_antisymm
     · refine iSup_le fun T => ?_
@@ -123,39 +126,36 @@ def violations (s : U × Belief U) : ℕ :=
   | none => 0
   | some _ => 1
 
-/-- The search problem of the reduction, as a model of Section 3 with weight `λ`. -/
-def model (lam : ℝ≥0) : SearchModel (U × Belief U) (Belief U) (Fin n) Unit where
-  belief := Prod.snd
+/-- The search problem of the reduction, as a model of Section 3 with weights `κ` and `λ`. -/
+def model (κ lam : ℝ≥0) : SearchModel (U × Belief U) (Belief U) (Fin n) Unit where
+  info := Prod.snd
   violated := violations
   next s d _ := I.step s d
   prob _ _ _ := 1
   lam := lam
-  violated_next_le s d _ := by
-    rcases s with ⟨u, _ | W⟩
-    · simp [step, violations]
-    · simp only [step]
-      split_ifs <;> simp [violations]
+  κ := κ
+  rmax := 1
 
 /-- The total cost of a policy over the causes; its expected cost is this divided by `|U|`. -/
-noncomputable def searchCost (lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) : ℝ≥0∞ :=
-  ∑ u, (I.model lam).cost μ (u, some univ)
+noncomputable def searchCost (κ lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) : ℝ≥0∞ :=
+  ∑ u, (I.model κ lam).cost μ (u, some univ)
 
 variable {I}
 
 omit [Fintype U] in
-theorem cost_eq (lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) (s : U × Belief U) :
-    (I.model lam).cost μ s =
-      if (I.model lam).Stops s (μ s.2) then
-        ((μ s.2).2 : ℝ≥0∞) + lam * violations s
-      else ((μ s.2).2 : ℝ≥0∞) + (I.model lam).cost μ (I.step s (μ s.2)) :=
-  (I.model lam).cost_eq_of_deterministic (fun _ _ => rfl) μ s
+theorem cost_eq (κ lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) (s : U × Belief U) :
+    (I.model κ lam).cost μ s =
+      if (I.model κ lam).Stops s (μ s.2) then
+        (lam : ℝ≥0∞) * violations s
+      else ((μ s.2).2 : ℝ≥0∞) + κ + (I.model κ lam).cost μ (I.step s (μ s.2)) :=
+  (I.model κ lam).cost_eq_of_deterministic (fun _ _ => rfl) μ s
 
 omit [Fintype U] in
-/-- A repaired search stops at no cost under a policy that verifies nothing once repaired. -/
-theorem cost_repaired (lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) (h : (μ none).2 = 0)
-    (u : U) : (I.model lam).cost μ (u, none) = 0 := by
+/-- A repaired search stops at no cost. -/
+theorem cost_repaired (κ lam : ℝ≥0) (μ : Policy (Belief U) (Fin n)) (u : U) :
+    (I.model κ lam).cost μ (u, none) = 0 := by
   rw [cost_eq]
-  simp [SearchModel.Stops, h, violations]
+  simp [SearchModel.Stops, model, violations]
 
 /-! ### From an ordering to a policy -/
 
@@ -176,6 +176,15 @@ noncomputable def policyOf : Policy (Belief U) (Fin n) := fun b =>
     else (0, 0)
 
 omit [Fintype U] in
+/-- The policy of an ordering verifies at most `r_max = 1` candidate per step. -/
+theorem policyOf_admissible (κ lam : ℝ≥0) : (I.model κ lam).Admissible (I.policyOf π) := by
+  intro b
+  change (I.policyOf π b).2 ≤ 1
+  rcases b with _ | W
+  · simp [policyOf]
+  · by_cases h : (I.meeting W).Nonempty <;> simp [policyOf, h]
+
+omit [Fintype U] in
 theorem policyOf_mem {W : Finset U} (h : (I.meeting W).Nonempty) :
     (I.policyOf π (some W)).1 ∈ I.meeting W := by
   simp only [policyOf, dif_pos h]
@@ -192,11 +201,11 @@ theorem policyOf_le {W : Finset U} (h : (I.meeting W).Nonempty) {i : Fin n}
 omit [Fintype U] in
 /-- From any belief that still contains the cause `u`, the policy of `π` repairs the network
 within one more step than the number of regions before `u`'s cover position that meet the
-belief. -/
-theorem cost_policyOf_le (lam : ℝ≥0) (u : U) :
+belief; each step costs `1 + κ`. -/
+theorem cost_policyOf_le (κ lam : ℝ≥0) (u : U) :
     ∀ (N : ℕ) (W : Finset U), u ∈ W →
       (univ.filter fun i => (π i : ℕ) < I.coverPos π u ∧ (I.sets i ∩ W).Nonempty).card = N →
-      (I.model lam).cost (I.policyOf π) (u, some W) ≤ N + 1 := by
+      (I.model κ lam).cost (I.policyOf π) (u, some W) ≤ (1 + κ) * (N + 1) := by
   intro N
   induction N using Nat.strong_induction_on with
   | _ N ih =>
@@ -208,15 +217,17 @@ theorem cost_policyOf_le (lam : ℝ≥0) (u : U) :
     have hne : (I.meeting W).Nonempty := ⟨c, hcmeet⟩
     set i := (I.policyOf π (some W)).1 with hi_def
     have hr : (I.policyOf π (some W)).2 = 1 := by simp [policyOf, dif_pos hne]
-    have hstop : ¬(I.model lam).Stops (u, some W) (I.policyOf π (some W)) := by
+    have hstop : ¬(I.model κ lam).Stops (u, some W) (I.policyOf π (some W)) := by
       simp [SearchModel.Stops, hr, model, violations]
     rw [cost_eq, if_neg hstop, hr]
     simp only [Nat.cast_one]
+    change (1 : ℝ≥0∞) + κ + _ ≤ _
     by_cases hui : u ∈ I.sets i
     · have hs : I.step (u, some W) (I.policyOf π (some W)) = (u, none) := by
         simp [step, hr, ← hi_def, hui]
-      rw [hs, cost_repaired lam _ (by simp [policyOf]) u, add_zero]
-      exact le_add_self
+      rw [hs, cost_repaired κ lam _ u, add_zero]
+      calc (1 + (κ : ℝ≥0∞)) = (1 + κ) * 1 := (mul_one _).symm
+        _ ≤ (1 + κ) * (N + 1) := by gcongr; exact le_add_self
     · have hs : I.step (u, some W) (I.policyOf π (some W)) = (u, some (W \ I.sets i)) := by
         simp [step, hr, ← hi_def, hui]
       rw [hs]
@@ -240,19 +251,20 @@ theorem cost_policyOf_le (lam : ℝ≥0) (u : U) :
           exact ⟨hlt, himeet⟩
         · simp [A', inter_sdiff_self]
       have hcard : A'.card < N := hN ▸ Finset.card_lt_card hsub
-      calc (1 : ℝ≥0∞) + (I.model lam).cost (I.policyOf π) (u, some (W \ I.sets i))
-          ≤ 1 + (A'.card + 1) := by
+      calc (1 + (κ : ℝ≥0∞)) + (I.model κ lam).cost (I.policyOf π) (u, some (W \ I.sets i))
+          ≤ (1 + κ) + (1 + κ) * (A'.card + 1) := by
             gcongr
             exact ih A'.card hcard _ (mem_sdiff.2 ⟨hu, hui⟩) rfl
-        _ ≤ N + 1 := by
-            rw [add_comm]
+        _ = (1 + κ) * ((A'.card + 1) + 1) := by ring
+        _ ≤ (1 + κ) * (N + 1) := by
             gcongr
             exact_mod_cast Nat.succ_le_of_lt hcard
 
-/-- **(a)** Every ordering yields a policy whose total cost is at most the ordering's. -/
-theorem searchCost_policyOf_le (lam : ℝ≥0) :
-    I.searchCost lam (I.policyOf π) ≤ I.mssc π := by
-  rw [searchCost, mssc, Nat.cast_sum]
+/-- **(a)** Every ordering yields a policy whose total cost is at most `1 + κ` times the
+ordering's. -/
+theorem searchCost_policyOf_le (κ lam : ℝ≥0) :
+    I.searchCost κ lam (I.policyOf π) ≤ (1 + κ) * I.mssc π := by
+  rw [searchCost, mssc, Nat.cast_sum, Finset.mul_sum]
   refine Finset.sum_le_sum fun u _ => ?_
   have hcard : (univ.filter fun i => (π i : ℕ) < I.coverPos π u ∧
       (I.sets i ∩ univ).Nonempty).card ≤ I.coverPos π u := by
@@ -263,14 +275,14 @@ theorem searchCost_policyOf_le (lam : ℝ≥0) :
           · intro a _ b _ h
             exact π.injective (Fin.ext h)
       _ = _ := card_range _
-  calc (I.model lam).cost (I.policyOf π) (u, some univ) ≤ _ + 1 :=
-        I.cost_policyOf_le π lam u _ univ (mem_univ u) rfl
-    _ ≤ (I.coverPos π u : ℝ≥0∞) + 1 := by gcongr
-    _ = ((I.coverPos π u + 1 : ℕ) : ℝ≥0∞) := by push_cast; rfl
+  calc (I.model κ lam).cost (I.policyOf π) (u, some univ) ≤ (1 + κ) * (_ + 1) :=
+        I.cost_policyOf_le π κ lam u _ univ (mem_univ u) rfl
+    _ ≤ (1 + κ) * ((I.coverPos π u : ℝ≥0∞) + 1) := by gcongr
+    _ = (1 + κ) * ((I.coverPos π u + 1 : ℕ) : ℝ≥0∞) := by push_cast; rfl
 
-theorem exists_policy_le (lam : ℝ≥0) :
-    ∃ μ : Policy (Belief U) (Fin n), I.searchCost lam μ ≤ I.mssc π :=
-  ⟨I.policyOf π, I.searchCost_policyOf_le π lam⟩
+theorem exists_policy_le (κ lam : ℝ≥0) :
+    ∃ μ : Policy (Belief U) (Fin n), I.searchCost κ lam μ ≤ (1 + κ) * I.mssc π :=
+  ⟨I.policyOf π, I.searchCost_policyOf_le π κ lam⟩
 
 end OrderingToPolicy
 
@@ -398,15 +410,18 @@ theorem rank_region_le {k : ℕ} (hk : k < n) : I.rank μ (I.region μ k) ≤ k 
     _ = m := card_range m
     _ ≤ k := hm
 
-/-- Along the search for cause `u`, from step `k` on, the extracted ordering covers `u` no later
-than the search's remaining cost plus `k`, provided that `λ ≥ n`. -/
-theorem coverPos_le_cost {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam) (u : U) :
+/-- Along the search for cause `u`, from step `k` on, `1 + κ` times the position at which the
+extracted ordering covers `u` is at most the search's remaining cost plus `(1 + κ) k`, provided that
+`λ ≥ (1 + κ) n`. -/
+theorem coverPos_le_cost {κ lam : ℝ≥0} (hlam : (1 + κ) * (n : ℝ≥0) ≤ lam) (u : U) :
     ∀ (m k : ℕ), k + m = n → u ∈ I.openCauses μ k →
-      ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞) ≤
-        k + (I.model lam).cost μ (u, some (I.openCauses μ k)) := by
-  have hpos : ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞) ≤ n := by
+      (1 + (κ : ℝ≥0∞)) * ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞) ≤
+        (1 + κ) * k + (I.model κ lam).cost μ (u, some (I.openCauses μ k)) := by
+  have hpos : (1 + (κ : ℝ≥0∞)) * ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞) ≤
+      (1 + κ) * n := by
+    gcongr
     exact_mod_cast I.coverPos_lt (I.extract μ) u
-  have hlamE : (n : ℝ≥0∞) ≤ lam := by exact_mod_cast hlam
+  have hlamE : (1 + (κ : ℝ≥0∞)) * n ≤ lam := by exact_mod_cast hlam
   intro m
   induction m with
   | zero =>
@@ -421,28 +436,28 @@ theorem coverPos_le_cost {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam) (u : U) 
     set d := μ (some W)
     rw [cost_eq]
     by_cases hr : d.2 = 0
-    · -- The search stops unrepaired and pays `λ ≥ n`.
-      have hstop : (I.model lam).Stops (u, some W) (μ (some W)) := Or.inl hr
+    · -- The search stops unrepaired and pays `λ ≥ (1 + κ) n`.
+      have hstop : (I.model κ lam).Stops (u, some W) (μ (some W)) := Or.inl hr
       rw [if_pos hstop]
       simp only [violations, Nat.cast_one, mul_one]
-      calc _ ≤ (n : ℝ≥0∞) := hpos
-        _ ≤ lam := hlamE
-        _ ≤ ((μ (some W)).2 : ℝ≥0∞) + lam := le_add_self
-        _ ≤ _ := le_add_self
-    · have hstop : ¬(I.model lam).Stops (u, some W) (μ (some W)) := by
+      exact hpos.trans (hlamE.trans le_add_self)
+    · have hstop : ¬(I.model κ lam).Stops (u, some W) (μ (some W)) := by
         simp [SearchModel.Stops, model, violations, hr, d]
       rw [if_neg hstop]
-      have hr1 : (1 : ℝ≥0∞) ≤ ((μ (some W)).2 : ℝ≥0∞) := by exact_mod_cast Nat.one_le_iff_ne_zero.2 hr
+      have hr1 : (1 : ℝ≥0∞) ≤ ((μ (some W)).2 : ℝ≥0∞) := by
+        exact_mod_cast Nat.one_le_iff_ne_zero.2 hr
+      have hc : 1 + (κ : ℝ≥0∞) ≤ ((μ (some W)).2 : ℝ≥0∞) + κ := by gcongr
       by_cases hui : u ∈ I.sets d.1
       · -- The search repairs the network at step `k`, and the extracted ordering covers `u` by
         -- position `k`.
         have hcov : I.coverPos (I.extract μ) u ≤ k :=
           (I.coverPos_le (I.extract μ) hui).trans (I.rank_region_le μ hkn)
-        calc ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞) ≤ ((k + 1 : ℕ) : ℝ≥0∞) := by
-              exact_mod_cast Nat.succ_le_succ hcov
-          _ = k + 1 := by push_cast; rfl
-          _ ≤ k + ((μ (some W)).2 : ℝ≥0∞) := by gcongr
-          _ ≤ _ := by rw [← add_assoc]; exact le_self_add
+        calc (1 + (κ : ℝ≥0∞)) * ((I.coverPos (I.extract μ) u + 1 : ℕ) : ℝ≥0∞)
+            ≤ (1 + κ) * ((k + 1 : ℕ) : ℝ≥0∞) := by
+              gcongr
+          _ = (1 + κ) * k + (1 + κ) := by push_cast; ring
+          _ ≤ (1 + κ) * k + (((μ (some W)).2 : ℝ≥0∞) + κ) := by gcongr
+          _ ≤ _ := by exact add_le_add le_rfl le_self_add
       · -- The search rules out the causes of the region and continues from step `k + 1`.
         have hs : I.step (u, some W) (μ (some W)) = (u, some (I.openCauses μ (k + 1))) := by
           simp [step, hr, hui, openCauses, W, d]
@@ -451,17 +466,19 @@ theorem coverPos_le_cost {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam) (u : U) 
           rw [if_neg (show ¬(μ (some (I.openCauses μ k))).2 = 0 from hr)]
           exact mem_sdiff.2 ⟨hu, hui⟩
         rw [hs]
-        calc _ ≤ ((k + 1 : ℕ) : ℝ≥0∞) + (I.model lam).cost μ (u, some (I.openCauses μ (k + 1))) :=
+        calc _ ≤ (1 + (κ : ℝ≥0∞)) * ((k + 1 : ℕ) : ℝ≥0∞) +
+              (I.model κ lam).cost μ (u, some (I.openCauses μ (k + 1))) :=
               ih (k + 1) (by omega) hu'
-          _ = k + (1 + (I.model lam).cost μ (u, some (I.openCauses μ (k + 1)))) := by
+          _ = (1 + κ) * k + ((1 + κ) +
+              (I.model κ lam).cost μ (u, some (I.openCauses μ (k + 1)))) := by
               push_cast; ring
           _ ≤ _ := by gcongr
 
-/-- **(b)** If `λ ≥ n`, every policy yields an ordering whose cost is at most the policy's total
-cost. -/
-theorem mssc_extract_le {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam) :
-    (I.mssc (I.extract μ) : ℝ≥0∞) ≤ I.searchCost lam μ := by
-  rw [mssc, searchCost, Nat.cast_sum]
+/-- **(b)** If `λ ≥ (1 + κ) n`, every policy yields an ordering whose cost times `1 + κ` is at most
+the policy's total cost. -/
+theorem mssc_extract_le {κ lam : ℝ≥0} (hlam : (1 + κ) * (n : ℝ≥0) ≤ lam) :
+    (1 + (κ : ℝ≥0∞)) * (I.mssc (I.extract μ) : ℝ≥0∞) ≤ I.searchCost κ lam μ := by
+  rw [mssc, searchCost, Nat.cast_sum, Finset.mul_sum]
   refine Finset.sum_le_sum fun u _ => ?_
   simpa [openCauses] using I.coverPos_le_cost μ hlam u n 0 (zero_add n) (mem_univ u)
 
@@ -469,30 +486,39 @@ end PolicyToOrdering
 
 /-! ### Correctness of the reduction -/
 
-/-- **Proposition 2 (correctness of the reduction).** With `λ ≥ n`, the ordering extracted from
-an optimal search policy of the constructed instance is an optimal ordering for min-sum set
-cover. -/
-theorem extract_optimal [NeZero n] {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam)
-    (μstar : Policy (Belief U) (Fin n))
-    (hopt : ∀ μ, I.searchCost lam μstar ≤ I.searchCost lam μ) (π : Ordering n) :
-    I.mssc (I.extract μstar) ≤ I.mssc π := by
-  have h : (I.mssc (I.extract μstar) : ℝ≥0∞) ≤ I.mssc π :=
-    calc (I.mssc (I.extract μstar) : ℝ≥0∞) ≤ I.searchCost lam μstar := I.mssc_extract_le μstar hlam
-      _ ≤ I.searchCost lam (I.policyOf π) := hopt _
-      _ ≤ I.mssc π := I.searchCost_policyOf_le π lam
-  exact_mod_cast h
+/-- Cancelling the factor `1 + κ`. -/
+private theorem mul_le_mul_cancel (κ : ℝ≥0) {a b : ℕ}
+    (h : (1 + (κ : ℝ≥0∞)) * a ≤ (1 + κ) * b) : a ≤ b := by
+  have h' : ((1 + κ) * a : ℝ≥0) ≤ (1 + κ) * b := by exact_mod_cast h
+  have hpos : (0 : ℝ≥0) < 1 + κ := by positivity
+  exact_mod_cast (mul_le_mul_iff_right₀ hpos).1 h'
 
-/-- The optimal expected costs coincide: the minimum total search cost equals the minimum MSSC
-cost, so the optimal expected search cost is the optimal MSSC cost divided by `|U|`. -/
-theorem searchCost_optimal_eq [NeZero n] {lam : ℝ≥0} (hlam : (n : ℝ≥0) ≤ lam)
+/-- **Proposition 4 (correctness of the reduction).** With `λ ≥ (1 + κ) n`, the ordering extracted
+from an optimal search policy of the constructed instance is an optimal ordering for min-sum set
+cover. -/
+theorem extract_optimal [NeZero n] {κ lam : ℝ≥0} (hlam : (1 + κ) * (n : ℝ≥0) ≤ lam)
     (μstar : Policy (Belief U) (Fin n))
-    (hopt : ∀ μ, I.searchCost lam μstar ≤ I.searchCost lam μ)
+    (hopt : ∀ μ, (I.model κ lam).Admissible μ → I.searchCost κ lam μstar ≤ I.searchCost κ lam μ)
+    (π : Ordering n) :
+    I.mssc (I.extract μstar) ≤ I.mssc π :=
+  mul_le_mul_cancel κ <|
+    calc (1 + (κ : ℝ≥0∞)) * (I.mssc (I.extract μstar) : ℝ≥0∞)
+        ≤ I.searchCost κ lam μstar := I.mssc_extract_le μstar hlam
+      _ ≤ I.searchCost κ lam (I.policyOf π) := hopt _ (I.policyOf_admissible π κ lam)
+      _ ≤ (1 + κ) * I.mssc π := I.searchCost_policyOf_le π κ lam
+
+/-- The optimal expected costs coincide: the minimum total search cost is `1 + κ` times the minimum
+MSSC cost, so the optimal expected search cost is `(1 + κ) A(π*)`. -/
+theorem searchCost_optimal_eq [NeZero n] {κ lam : ℝ≥0} (hlam : (1 + κ) * (n : ℝ≥0) ≤ lam)
+    (μstar : Policy (Belief U) (Fin n))
+    (hopt : ∀ μ, (I.model κ lam).Admissible μ → I.searchCost κ lam μstar ≤ I.searchCost κ lam μ)
     (πstar : Ordering n) (hπ : ∀ π, I.mssc πstar ≤ I.mssc π) :
-    I.searchCost lam μstar = I.mssc πstar := by
+    I.searchCost κ lam μstar = (1 + κ) * I.mssc πstar := by
   apply le_antisymm
-  · exact (hopt _).trans (I.searchCost_policyOf_le πstar lam)
-  · exact (by exact_mod_cast hπ (I.extract μstar) : (I.mssc πstar : ℝ≥0∞) ≤ _).trans
-      (I.mssc_extract_le μstar hlam)
+  · exact (hopt _ (I.policyOf_admissible πstar κ lam)).trans (I.searchCost_policyOf_le πstar κ lam)
+  · refine le_trans ?_ (I.mssc_extract_le μstar hlam)
+    gcongr
+    exact hπ _
 
 end Instance
 

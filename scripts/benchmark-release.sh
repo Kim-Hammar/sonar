@@ -1,31 +1,12 @@
 #!/usr/bin/env bash
 # Usage: scripts/benchmark-release.sh [--with-traces] [RUN_DIR] [OUT_DIR] [BASELINE_DIR]
 #
-# Stages the results of a benchmark run (scripts/benchmark.sh) for publication as a dataset,
-# without uploading anything. Defaults: RUN_DIR output/benchmark/main, OUT_DIR
-# output/release/sonar-results, BASELINE_DIR output/benchmark/baseline/main (the LLM baselines'
-# results from Cornetto).
+# Stages the RELEASED cells of a benchmark run in OUT_DIR for publication, without uploading.
+# Defaults: RUN_DIR output/benchmark/main, OUT_DIR output/release/sonar-results, BASELINE_DIR
+# output/benchmark/baseline/main. Rerunning updates OUT_DIR in place and keeps its README.md.
 #
-# By default only metrics are staged: the traces contain the repairs of the benchmark's tasks,
-# which must not end up in training data. --with-traces also stages them under results/, for
-# sharing on request.
-#
-# Layout of OUT_DIR:
-#   per_scenario.csv, summary*.csv, summary.json    SONAR's results in Cornetto's format
-#   comparison/                                     the same merged with the LLM baselines
-#   scripts/                                        the scripts that ran and exported the benchmark
-#   MANIFEST.sha256                                 a checksum of every file
-#   results/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
-#       model, provider, theta, extra-args          the cell's settings
-#       runs/<id>/run.json, events.jsonl            the run's settings and trace
-#       runs/<id>/details.jsonl.zst                 the detailed trace, compressed with zstd
-#   results/baselines/<method>/<provider>-<model>/spec-<pct>pct/seed-<seed>/   (--with-traces only)
-#       config.yaml, scenarios.jsonl, llm_calls.jsonl   a baseline cell's settings and results
-#       tasks.tar.zst                               per task: the repaired configurations (fix/)
-#                                                   and their evaluation (evaluation_results.json)
-#
-# Only the cells in RELEASED are staged, and the result files keep only their rows. Rerunning
-# the script updates OUT_DIR in place; a README.md written there is kept.
+# Only metrics are staged by default, since the traces hold the benchmark's repairs and must not end
+# up in training data. --with-traces adds them under results/, for sharing on request.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 cd "$root"
@@ -89,8 +70,7 @@ for relative in "${RELEASED[@]}"; do
   done
 done
 
-# A baseline cell is spec-<pct>pct/seed-<seed>; the oldest cells keep their results directly in
-# spec-<pct>pct (Cornetto's earlier layout, seed 42), and are staged as seed-42.
+# The oldest baseline cells have no seed directory; they are staged as seed-42.
 baseline_cells=()
 for spec in "$baseline_dir"/cells/*/*/spec-*pct; do
   if compgen -G "$spec/seed-*" > /dev/null; then

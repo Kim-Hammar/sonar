@@ -43,11 +43,11 @@ downloads it into `dataset/main_dataset`. The evaluation metrics are published i
 The propositions of the SONAR paper are formalized in Lean 4; see
 [proofs/README.md](proofs/README.md) for how to check them and for the scope of each result.
 
-- [Prop. 1](proofs/Sonar/Existence.lean): an optimal search policy exists.
-- [Prop. 2](proofs/Sonar/Reduction.lean): computing an optimal policy is NP-hard (the reduction from
+- [Prop. 1](proofs/Sonar/Complexity.lean): a step of SONAR takes `O(n)` operations.
+- [Prop. 2](proofs/Sonar/Completeness.lean): SONAR is sound and complete.
+- [Prop. 3](proofs/Sonar/Existence.lean): an optimal search policy exists.
+- [Prop. 4](proofs/Sonar/Reduction.lean): computing an optimal policy is NP-hard (the reduction from
   min-sum set cover is formalized; the hardness of that problem is cited).
-- [Prop. 3](proofs/Sonar/Complexity.lean): a step of SONAR takes `O(n)` operations.
-- [Prop. 4](proofs/Sonar/Completeness.lean): SONAR is sound and complete.
 
 ## License
 

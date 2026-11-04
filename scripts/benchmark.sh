@@ -5,30 +5,18 @@
 #                             [--variant NAME --extra-args "ARGS"] [--provider NAME]
 #                             [--install NAME]
 #
-# The sonar counterpart of the Cornetto comparison benchmark (src/benchmark/compare.py in the
-# cornetto repository): repairs every scenario once per (policy, model, specification share, seed)
-# cell and exports the results in Cornetto's format, so that they can be put next to the LLM
-# baselines (monolithic, react).
+# Repairs every scenario per (policy, model, specification share, seed) cell and exports the results
+# in the format of Cornetto's comparison benchmark. Results go to output/benchmark/<run>, cells to
+# cells/sonar-<policy>[-<variant>]/<provider>-<model>/spec-<pct>pct/seed-<seed>.
 #
-# Layout, mirroring Cornetto's results_bench/<run>:
-#   output/benchmark/<run>/cells/sonar-<policy>/<provider>-<model>/spec-<pct>pct/seed-<seed>/
-#       runs/<id>/events.jsonl, decision-cache, batfish   (the sonar output directory of the cell)
-#   An ablation (--variant NAME, with its repair options in --extra-args) gets the method
-#   sonar-<policy>-<variant>, e.g. --variant uniform-prior --extra-args "--prior uniform".
-#   A decision model served elsewhere than OpenRouter names its provider, e.g. an LLM in Jev's
-#   place: --provider google --models gemini-3.8-flash --extra-args "--decision-api chat
+# Finished scenarios are not rerun, and scenarios without specifications at <pct> are skipped. Each
+# cell has its own decision cache, so token usage is not reduced by other cells. The build is
+# installed into the run directory; a concurrent sweep of the same run needs its own --install.
+#
+# Ablation: --variant uniform-prior --extra-args "--prior uniform"
+# Other provider: --provider google --models gemini-3.8-flash --extra-args "--decision-api chat
 #   --endpoint https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-#   --api-key-variable GOOGLE_API_KEY".
-#   output/benchmark/<run>/per_scenario.csv, summary_by_seed.csv, summary.csv, summary.json
-#
-# Every cell has its own output directory and hence an empty decision cache, so the recorded token
-# usage is what the decision model was really asked. A cell is resumable: a scenario with a
-# finished event is not repaired again. Scenarios without specifications_<pct>pct.csv (94 and 95
-# at 100 %) are skipped and exported as missing_spec, as Cornetto does.
-#
-# The sonar build is installed once into output/benchmark/<run>/sonar-install and run from there,
-# so rebuilding the project does not replace the jars under a running benchmark. A sweep started
-# while another one runs in the same run directory needs its own --install name.
+#   --api-key-variable GOOGLE_API_KEY"
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 cd "$root"

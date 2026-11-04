@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
 """
-Exports a sonar benchmark run (scripts/benchmark.sh) in the format of the Cornetto comparison
-benchmark (src/benchmark/compare.py in the cornetto repository): per_scenario.csv,
-summary_by_seed.csv, summary.csv and summary.json, with the same columns, so that sonar's rows
-can be concatenated with the LLM baselines.
+Exports a benchmark run in the format of Cornetto's comparison benchmark, so that its rows can be
+concatenated with the LLM baselines. With --baseline, also merges them into comparison/, where
+paired.csv has every method's outcome per scenario.
 
-Usage:
-    scripts/benchmark-export.py output/benchmark/<run>
-    scripts/benchmark-export.py output/benchmark/<run> --baseline output/benchmark/baseline/per_scenario.csv
+Usage: scripts/benchmark-export.py output/benchmark/<run> [--baseline <per_scenario.csv>]
 
-With --baseline, the baseline rows are merged with sonar's into comparison/ (per_scenario.csv,
-summary_by_seed.csv, summary.csv, summary.json), and paired.csv puts every method's fix rate,
-success and tokens of a scenario on one line.
-
-Mapping of a sonar finished event onto a Cornetto row:
-    fix_rate        fixed / (fixed + remaining + sideEffects)   (Cornetto's compute_fix_rate)
-    regression_rate sideEffects / (fixed + remaining + sideEffects)
-    success         fix_rate >= 1.0                              (Cornetto's similarity_threshold)
-    llm_calls       providerCalls, agent_steps = decisions, verifications = verifications
+Mapping of a finished event onto Cornetto's columns (with total = fixed + remaining + sideEffects):
+    fix_rate        fixed / total
+    regression_rate sideEffects / total
+    success         fix_rate >= 1.0
+    llm_calls       providerCalls
+    agent_steps     decisions
     wall_time_s     time from the scenario's first event to its finished event
-    failure_mode    "none" when solved, sonar's stop reason otherwise
-Sonar does not record LLM latency, cached tokens or thinking tokens; those columns stay empty.
+    failure_mode    "none" when solved, the stop reason otherwise
+LLM latency, cached tokens and thinking tokens are not recorded; those columns stay empty.
 """
 
 import argparse
